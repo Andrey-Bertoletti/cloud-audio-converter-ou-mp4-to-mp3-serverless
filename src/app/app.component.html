@@ -1,0 +1,79 @@
+<main class="min-h-screen bg-slate-50 p-6 text-slate-800">
+  <section class="mx-auto max-w-3xl rounded-2xl bg-white p-6 shadow-md">
+    <h1 class="text-2xl font-bold">Conversor MP4 para MP3</h1>
+    <p class="mt-1 text-sm text-slate-500">
+      Conversão local com ffmpeg.wasm + persistência de logs no Supabase.
+    </p>
+
+    <div
+      class="mt-6 rounded-xl border-2 border-dashed p-8 text-center transition"
+      [class.border-indigo-500]="isDragging"
+      [class.bg-indigo-50]="isDragging"
+      [class.border-slate-300]="!isDragging"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onDrop($event)"
+    >
+      <p class="text-sm">Arraste um arquivo .mp4 aqui</p>
+      <p class="my-3 text-xs text-slate-500">ou</p>
+      <label
+        class="inline-flex cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+      >
+        Selecionar arquivo
+        <input class="hidden" type="file" accept=".mp4" (change)="onFileInputChange($event)" />
+      </label>
+      <p *ngIf="selectedFile" class="mt-4 text-sm font-medium text-slate-700">
+        Arquivo: {{ selectedFile.name }}
+      </p>
+    </div>
+
+    <div class="mt-5 flex flex-wrap items-center gap-3">
+      <button
+        class="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+        [disabled]="!selectedFile || isConverting"
+        (click)="converterArquivo()"
+      >
+        {{ isConverting ? 'Convertendo...' : 'Converter para MP3' }}
+      </button>
+
+      <button
+        class="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+        [disabled]="!outputUrl"
+        (click)="baixarArquivo()"
+      >
+        Baixar MP3
+      </button>
+    </div>
+
+    <div *ngIf="isConverting || progress > 0" class="mt-5">
+      <div class="h-3 w-full rounded-full bg-slate-200">
+        <div
+          class="h-3 rounded-full bg-indigo-600 transition-all"
+          [style.width.%]="progress"
+        ></div>
+      </div>
+      <p class="mt-2 text-sm">{{ progress }}%</p>
+    </div>
+
+    <p *ngIf="errorMessage" class="mt-4 text-sm text-red-600">{{ errorMessage }}</p>
+    <p *ngIf="successMessage" class="mt-4 text-sm text-emerald-600">{{ successMessage }}</p>
+
+    <div class="mt-8 border-t pt-5">
+      <h2 class="text-lg font-semibold">Últimas 5 conversões</h2>
+      <ul class="mt-3 space-y-2">
+        <li
+          *ngFor="let conversao of conversoes"
+          class="rounded-lg border border-slate-200 p-3 text-sm"
+        >
+          <p class="font-medium">{{ conversao.nome_arquivo }}</p>
+          <p class="text-slate-500">
+            {{ conversao.criado_em | date : 'short' }}
+          </p>
+        </li>
+      </ul>
+      <p *ngIf="!conversoes.length" class="mt-3 text-sm text-slate-500">
+        Nenhuma conversão registrada ainda.
+      </p>
+    </div>
+  </section>
+</main>
