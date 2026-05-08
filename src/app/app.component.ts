@@ -24,8 +24,11 @@ export class AppComponent implements OnInit {
   user: User | null = null;
   email = '';
   password = '';
+  confirmPassword = '';
+  name = '';
   isAuthLoading = true;
   authMode: 'login' | 'signup' = 'login';
+  newPassword = '';
 
   selectedFile: File | null = null;
   isDragging = false;
@@ -70,12 +73,53 @@ export class AppComponent implements OnInit {
 
   async signUp(): Promise<void> {
     this.errorMessage = '';
+    
+    if (this.password !== this.confirmPassword) {
+      this.errorMessage = 'As senhas não coincidem.';
+      return;
+    }
+
+    if (!this.name) {
+      this.errorMessage = 'O nome é obrigatório.';
+      return;
+    }
+
     const { error } = await supabase.auth.signUp({
       email: this.email,
-      password: this.password
+      password: this.password,
+      options: {
+        data: {
+          display_name: this.name
+        }
+      }
     });
+
     if (error) this.errorMessage = error.message;
     else this.successMessage = 'Confirme seu e-mail para continuar.';
+  }
+
+  get userDisplayName(): string {
+    return this.user?.user_metadata?.['display_name'] || this.user?.email || 'Usuário';
+  }
+
+  async updateProfile(): Promise<void> {
+    if (!this.name) {
+      this.errorMessage = 'O nome não pode estar vazio.';
+      return;
+    }
+
+    this.errorMessage = '';
+    this.successMessage = '';
+
+    const { error } = await supabase.auth.updateUser({
+      data: { display_name: this.name }
+    });
+
+    if (error) {
+      this.errorMessage = error.message;
+    } else {
+      this.successMessage = 'Perfil atualizado com sucesso!';
+    }
   }
 
   async signOut(): Promise<void> {
@@ -86,6 +130,27 @@ export class AppComponent implements OnInit {
     this.authMode = this.authMode === 'login' ? 'signup' : 'login';
     this.errorMessage = '';
     this.successMessage = '';
+  }
+
+  async updatePassword(): Promise<void> {
+    if (!this.newPassword || this.newPassword.length < 6) {
+      this.errorMessage = 'A senha deve ter pelo menos 6 caracteres.';
+      return;
+    }
+
+    this.errorMessage = '';
+    this.successMessage = '';
+
+    const { error } = await supabase.auth.updateUser({
+      password: this.newPassword
+    });
+
+    if (error) {
+      this.errorMessage = error.message;
+    } else {
+      this.successMessage = 'Senha atualizada com sucesso!';
+      this.newPassword = '';
+    }
   }
 
   onDragOver(event: DragEvent): void {
