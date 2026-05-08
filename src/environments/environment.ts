@@ -1,6 +1,6 @@
 export const environment = {
   production: false,
-  supabaseUrl: 'https://YOUR_PROJECT_ID.supabase.co',
-  supabaseAnonKey: 'YOUR_SUPABASE_ANON_KEY',
+  supabaseUrl: 'https://dfodllzboazozuxpzbmr.supabase.co',
+  supabaseAnonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmb2RsbHpib2F6b3p1eHB6Ym1yIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyNzUyMDUsImV4cCI6MjA5Mzg1MTIwNX0.DxpGoAG5v54oCSZutdOW2oOhZtso-KIAtod_t4cMT-w',
   apiBaseUrl: 'http://localhost:3000'
 };

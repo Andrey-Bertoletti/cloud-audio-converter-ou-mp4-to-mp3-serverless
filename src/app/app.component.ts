@@ -1,9 +1,11 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnInit } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import { supabase } from './supabase.client';
 import { environment } from '../environments/environment';
+import { User } from '@supabase/supabase-js';
 
 type Conversao = {
   id: number;
@@ -14,10 +16,17 @@ type Conversao = {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './app.component.html'
 })
 export class AppComponent implements OnInit {
+  // Auth state
+  user: User | null = null;
+  email = '';
+  password = '';
+  isAuthLoading = true;
+  authMode: 'login' | 'signup' = 'login';
+
   selectedFile: File | null = null;
   isDragging = false;
   isConverting = false;
@@ -32,7 +41,51 @@ export class AppComponent implements OnInit {
   private ffmpegLoaded = false;
 
   async ngOnInit(): Promise<void> {
-    await this.carregarConversoes();
+    const { data: { session } } = await supabase.auth.getSession();
+    this.user = session?.user ?? null;
+    this.isAuthLoading = false;
+
+    if (this.user) {
+      await this.carregarConversoes();
+    }
+
+    supabase.auth.onAuthStateChange(async (_event, session) => {
+      this.user = session?.user ?? null;
+      if (this.user) {
+        await this.carregarConversoes();
+      } else {
+        this.conversoes = [];
+      }
+    });
+  }
+
+  async signIn(): Promise<void> {
+    this.errorMessage = '';
+    const { error } = await supabase.auth.signInWithPassword({
+      email: this.email,
+      password: this.password
+    });
+    if (error) this.errorMessage = error.message;
+  }
+
+  async signUp(): Promise<void> {
+    this.errorMessage = '';
+    const { error } = await supabase.auth.signUp({
+      email: this.email,
+      password: this.password
+    });
+    if (error) this.errorMessage = error.message;
+    else this.successMessage = 'Confirme seu e-mail para continuar.';
+  }
+
+  async signOut(): Promise<void> {
+    await supabase.auth.signOut();
+  }
+
+  toggleAuthMode(): void {
+    this.authMode = this.authMode === 'login' ? 'signup' : 'login';
+    this.errorMessage = '';
+    this.successMessage = '';
   }
 
   onDragOver(event: DragEvent): void {
@@ -151,8 +204,10 @@ export class AppComponent implements OnInit {
   }
 
   private async uploadParaStorage(fileName: string, mp3Blob: Blob): Promise<string> {
+    if (!this.user) throw new Error('Usuário não autenticado.');
+    
     const timestamp = Date.now();
-    const uniquePath = `${timestamp}-${fileName}`;
+    const uniquePath = `${this.user.id}/${timestamp}-${fileName}`;
 
     const { error } = await supabase.storage
       .from('converted-audio')
@@ -172,31 +227,34 @@ export class AppComponent implements OnInit {
     nomeArquivo: string,
     storagePath: string
   ): Promise<void> {
-    const response = await fetch(`${environment.apiBaseUrl}/api/conversoes`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        nomeArquivo,
-        storagePath
-      })
+    if (!this.user) return;
+
+    const { error } = await supabase.from('conversoes').insert({
+      nome_arquivo: nomeArquivo,
+      storage_path: storagePath,
+      user_id: this.user.id
     });
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      throw new Error(body.error ?? 'Falha ao salvar log de conversão.');
+    if (error) {
+      throw new Error(`Falha ao salvar log: ${error.message}`);
     }
   }
 
   private async carregarConversoes(): Promise<void> {
-    const response = await fetch(`${environment.apiBaseUrl}/api/conversoes`);
-    if (!response.ok) {
-      this.errorMessage = 'Não foi possível carregar o histórico de conversões.';
+    if (!this.user) return;
+
+    const { data, error } = await supabase
+      .from('conversoes')
+      .select('id, nome_arquivo, criado_em')
+      .eq('user_id', this.user.id)
+      .order('criado_em', { ascending: false })
+      .limit(5);
+
+    if (error) {
+      this.errorMessage = 'Não foi possível carregar o histórico.';
       return;
     }
 
-    const data = (await response.json()) as Conversao[];
-    this.conversoes = data;
+    this.conversoes = data as Conversao[];
   }
 }
