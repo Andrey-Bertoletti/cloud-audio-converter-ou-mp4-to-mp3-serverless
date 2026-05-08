@@ -155,6 +155,26 @@ export class AppComponent implements OnInit {
     }
   }
 
+  async forgotPassword(): Promise<void> {
+    if (!this.email) {
+      this.errorMessage = 'Insira seu e-mail para recuperar a senha.';
+      return;
+    }
+
+    this.errorMessage = '';
+    this.successMessage = '';
+
+    const { error } = await supabase.auth.resetPasswordForEmail(this.email, {
+      redirectTo: `${window.location.origin}`
+    });
+
+    if (error) {
+      this.errorMessage = error.message;
+    } else {
+      this.successMessage = 'E-mail de recuperação enviado! Verifique sua caixa de entrada.';
+    }
+  }
+
   onDragOver(event: DragEvent): void {
     event.preventDefault();
     this.isDragging = true;
