@@ -95,27 +95,74 @@
           </div>
         </div>
 
-        <div 
-          class="rounded-xl border-2 border-dashed p-10 text-center" 
-          [class.border-indigo-500]="isDragging" 
-          [class.bg-indigo-50/50]="isDragging" 
-          [class.border-slate-200]="!isDragging" 
-          (dragover)="onDragOver($event)" 
-          (dragleave)="onDragLeave($event)" 
-          (drop)="onDrop($event)">
-          <p class="text-sm font-medium text-slate-900">Arraste um arquivo .mp4 aqui</p>
-          <label class="mt-4 inline-flex cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
-            Selecionar Arquivo
-            <input class="hidden" type="file" accept=".mp4" (change)="onFileInputChange($event)" />
-          </label>
-          <div *ngIf="selectedFile" class="mt-4 text-sm font-medium text-indigo-700">{{ selectedFile.name }}</div>
+        <!-- Conversion Tabs -->
+        <div class="mb-8 flex gap-2 p-1 bg-slate-100 rounded-xl">
+          <button 
+            (click)="selectedFile = null; youtubeUrl = ''" 
+            [class.bg-white]="!youtubeUrl" 
+            [class.shadow-sm]="!youtubeUrl"
+            class="flex-1 py-2 text-sm font-bold rounded-lg transition-all">
+            Arquivo MP4
+          </button>
+          <button 
+            (click)="selectedFile = null; youtubeUrl = ' '" 
+            [class.bg-white]="youtubeUrl" 
+            [class.shadow-sm]="youtubeUrl"
+            class="flex-1 py-2 text-sm font-bold rounded-lg transition-all">
+            Link do YouTube
+          </button>
         </div>
 
-        <div class="mt-6 flex flex-wrap items-center gap-4">
-          <button class="flex-1 rounded-lg bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-sm disabled:opacity-50" [disabled]="!selectedFile || isConverting" (click)="converterArquivo()">
-            {{ isConverting ? 'Processando...' : 'Converter para MP3' }}
-          </button>
-          <button class="flex-1 rounded-lg bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-sm disabled:opacity-30" [disabled]="!outputUrl" (click)="baixarArquivo()">Baixar MP3</button>
+        <!-- Local File Conversion -->
+        <div *ngIf="!youtubeUrl.trim()">
+          <div class="rounded-xl border-2 border-dashed p-10 text-center" [class.border-indigo-500]="isDragging" [class.bg-indigo-50]="isDragging" [class.border-slate-200]="!isDragging" (dragover)="onDragOver($event)" (dragleave)="onDragLeave($event)" (drop)="onDrop($event)">
+            <p class="text-sm font-medium text-slate-900">Arraste um arquivo .mp4 aqui</p>
+            <label class="mt-4 inline-flex cursor-pointer rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700">
+              Selecionar Arquivo
+              <input class="hidden" type="file" accept=".mp4" (change)="onFileInputChange($event)" />
+            </label>
+            <div *ngIf="selectedFile" class="mt-4 text-sm font-medium text-indigo-700">{{ selectedFile.name }}</div>
+          </div>
+
+          <div class="mt-6 flex flex-wrap items-center gap-4">
+            <button class="flex-1 rounded-lg bg-emerald-600 px-6 py-3 text-sm font-bold text-white shadow-sm disabled:opacity-50" [disabled]="!selectedFile || isConverting" (click)="converterArquivo()">
+              {{ isConverting ? 'Processando...' : 'Converter para MP3' }}
+            </button>
+            <button class="flex-1 rounded-lg bg-slate-900 px-6 py-3 text-sm font-bold text-white shadow-sm disabled:opacity-30" [disabled]="!outputUrl" (click)="baixarArquivo()">Baixar MP3</button>
+          </div>
+        </div>
+
+        <!-- YouTube Conversion -->
+        <div *ngIf="youtubeUrl.trim() || youtubeUrl === ' '" class="animate-in fade-in slide-in-from-top-4">
+          <div class="rounded-xl bg-slate-50 border border-slate-100 p-8 text-center">
+            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-red-100 text-red-600 mx-auto mb-4">
+              <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/>
+              </svg>
+            </div>
+            <h3 class="text-lg font-bold text-slate-900 mb-2">Converter do YouTube</h3>
+            <p class="text-sm text-slate-500 mb-6">Cole o link do vídeo para extrair o áudio em alta qualidade.</p>
+            
+            <div class="flex flex-col gap-3">
+              <input 
+                type="text" 
+                [(ngModel)]="youtubeUrl" 
+                class="block w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-red-500 focus:ring-4 focus:ring-red-500/5 transition-all shadow-sm" 
+                placeholder="https://www.youtube.com/watch?v=..." 
+              />
+              <button 
+                (click)="converterYouTube()" 
+                [disabled]="!youtubeUrl || isYtConverting"
+                class="w-full rounded-xl bg-red-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-red-200 hover:bg-red-700 hover:shadow-red-300 transition-all disabled:opacity-50 active:scale-[0.98]">
+                {{ isYtConverting ? 'Extraindo Áudio...' : 'Converter para MP3' }}
+              </button>
+            </div>
+            <div *ngIf="outputUrl" class="mt-4">
+              <button (click)="baixarArquivo()" class="w-full rounded-xl bg-slate-900 py-3.5 text-sm font-bold text-white shadow-sm hover:bg-slate-800 transition-all">
+                Baixar MP3 Agora
+              </button>
+            </div>
+          </div>
         </div>
 
         <div *ngIf="isConverting || progress > 0" class="mt-8">

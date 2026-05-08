@@ -26,9 +26,11 @@ export class AppComponent implements OnInit {
   password = '';
   confirmPassword = '';
   name = '';
+  youtubeUrl = '';
   isAuthLoading = true;
   authMode: 'login' | 'signup' = 'login';
   newPassword = '';
+  isYtConverting = false;
 
   selectedFile: File | null = null;
   isDragging = false;
@@ -227,6 +229,45 @@ export class AppComponent implements OnInit {
         error instanceof Error ? error.message : 'Falha ao converter arquivo.';
     } finally {
       this.isConverting = false;
+    }
+  }
+
+  async converterYouTube(): Promise<void> {
+    if (!this.youtubeUrl || this.isYtConverting) return;
+
+    this.isYtConverting = true;
+    this.errorMessage = '';
+    this.successMessage = '';
+    this.progress = 0;
+
+    try {
+      // Obter o token de sessão do Supabase
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      const response = await fetch(`${environment.apiBaseUrl}/api/youtube/convert`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`
+        },
+        body: JSON.stringify({ youtubeUrl: this.youtubeUrl })
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Falha na conversão do YouTube.');
+      }
+
+      this.outputUrl = result.downloadUrl;
+      this.outputName = result.fileName;
+      this.successMessage = 'Vídeo do YouTube convertido com sucesso!';
+      this.youtubeUrl = '';
+      await this.carregarConversoes();
+    } catch (error) {
+      this.errorMessage = error instanceof Error ? error.message : 'Erro ao converter YouTube.';
+    } finally {
+      this.isYtConverting = false;
     }
   }
 

@@ -6,6 +6,15 @@ const rateLimit = require('express-rate-limit');
 const cron = require('node-cron');
 const { supabaseAdmin } = require('./config/supabaseAdmin');
 const authMiddleware = require('./middleware/auth');
+const ytdl = require('@distube/ytdl-core');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+// Configura o caminho do ffmpeg estático
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -130,6 +139,89 @@ app.get('/api/conversoes', async (req, res) => {
   }
 
   return res.status(200).json(data ?? []);
+});
+
+app.post('/api/youtube/convert', async (req, res) => {
+  let tempFilePath = '';
+  try {
+    const { youtubeUrl } = req.body;
+    const user_id = req.user.id;
+
+    if (!ytdl.validateURL(youtubeUrl)) {
+      return res.status(400).json({ error: 'URL do YouTube inválida.' });
+    }
+
+    console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
+
+    // 1. Obter informações do vídeo
+    const info = await ytdl.getInfo(youtubeUrl);
+    const videoTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '').substring(0, 50);
+    const fileName = `${videoTitle}.mp3`;
+    const timestamp = Date.now();
+    const storagePath = `${user_id}/yt-${timestamp}-${fileName}`;
+
+    // 2. Criar caminho temporário para o arquivo convertido
+    tempFilePath = path.join(os.tmpdir(), `convert-${timestamp}.mp3`);
+
+    // 3. Baixar e converter usando stream
+    await new Promise((resolve, reject) => {
+      ffmpeg(ytdl(youtubeUrl, { quality: 'highestaudio', filter: 'audioonly' }))
+        .toFormat('mp3')
+        .audioBitrate(192)
+        .on('error', (err) => {
+          console.error('[YouTube] Erro no FFmpeg:', err);
+          reject(err);
+        })
+        .on('end', () => {
+          console.log('[YouTube] Conversão local concluída.');
+          resolve(true);
+        })
+        .save(tempFilePath);
+    });
+
+    // 4. Ler o arquivo convertido e fazer upload para o Supabase
+    const fileBuffer = fs.readFileSync(tempFilePath);
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from('converted-audio')
+      .upload(storagePath, fileBuffer, {
+        contentType: 'audio/mpeg',
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    // 5. Salvar no banco de dados
+    const { error: dbError } = await supabaseAdmin.from('conversoes').insert({
+      nome_arquivo: fileName,
+      storage_path: storagePath,
+      user_id: user_id
+    });
+
+    if (dbError) throw dbError;
+
+    // 6. Gerar URL pública (ou assinada)
+    const { data: { publicUrl } } = supabaseAdmin.storage
+      .from('converted-audio')
+      .getPublicUrl(storagePath);
+
+    console.log('[YouTube] Sucesso total!');
+    return res.status(200).json({ 
+      ok: true, 
+      downloadUrl: publicUrl,
+      fileName: fileName
+    });
+
+  } catch (error) {
+    console.error('[YouTube] Falha catastrófica:', error.message);
+    return res.status(500).json({ 
+      error: error.message || 'Erro ao processar vídeo do YouTube.' 
+    });
+  } finally {
+    // Limpar arquivo temporário
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      fs.unlinkSync(tempFilePath);
+    }
+  }
 });
 
 app.listen(port, () => {
