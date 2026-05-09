@@ -33,6 +33,7 @@ export class AppComponent implements OnInit {
   newPassword = '';
   currentPassword = '';
   isYtConverting = false;
+  ytStatus = ''; // Status detalhado para YouTube
 
   // View state
   currentView: 'converter' | 'profile' | 'reset-password' = 'converter';
@@ -55,7 +56,7 @@ export class AppComponent implements OnInit {
   private ffmpeg = new FFmpeg();
   private ffmpegLoaded = false;
 
-  constructor(private cdr: ChangeDetectorRef) {}
+  constructor(public cdr: ChangeDetectorRef) {}
 
   async ngOnInit(): Promise<void> {
     // 1. Detectar se é um fluxo de recuperação de senha
@@ -98,6 +99,20 @@ export class AppComponent implements OnInit {
       password: this.password
     });
     if (error) this.errorMessage = error.message;
+    this.cdr.markForCheck();
+  }
+
+  async signInWithGoogle(): Promise<void> {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}`
+      }
+    });
+    if (error) {
+      this.errorMessage = error.message;
+      this.cdr.markForCheck();
+    }
   }
 
   async signUp(): Promise<void> {
@@ -125,6 +140,7 @@ export class AppComponent implements OnInit {
 
     if (error) this.errorMessage = error.message;
     else this.successMessage = 'Confirme seu e-mail para continuar.';
+    this.cdr.markForCheck();
   }
 
   get userDisplayName(): string {
@@ -149,10 +165,12 @@ export class AppComponent implements OnInit {
     } else {
       this.successMessage = 'Perfil atualizado com sucesso!';
     }
+    this.cdr.markForCheck();
   }
 
   async signOut(): Promise<void> {
     await supabase.auth.signOut();
+    this.cdr.markForCheck();
   }
 
   toggleAuthMode(): void {
@@ -203,6 +221,7 @@ export class AppComponent implements OnInit {
   async forgotPassword(): Promise<void> {
     if (!this.email) {
       this.errorMessage = 'Insira seu e-mail para recuperar a senha.';
+      this.cdr.markForCheck();
       return;
     }
 
@@ -214,10 +233,17 @@ export class AppComponent implements OnInit {
     });
 
     if (error) {
-      this.errorMessage = error.message;
+      if (error.message.toLowerCase().includes('rate limit')) {
+        this.errorMessage = 'Limite de e-mails atingido (3 por hora). Aguarde ou configure seu SMTP.';
+      } else if (error.message.toLowerCase().includes('not found')) {
+        this.errorMessage = 'E-mail não encontrado em nossa base de dados.';
+      } else {
+        this.errorMessage = 'Erro ao enviar: Verifique o e-mail ou tente mais tarde.';
+      }
     } else {
-      this.successMessage = 'E-mail de recuperação enviado! Verifique sua caixa de entrada.';
+      this.successMessage = 'Link de recuperação enviado com sucesso!';
     }
+    this.cdr.markForCheck();
   }
 
   onDragOver(event: DragEvent): void {
@@ -302,12 +328,18 @@ export class AppComponent implements OnInit {
     if (!this.youtubeUrl || this.isYtConverting) return;
 
     this.isYtConverting = true;
+    this.ytStatus = 'Iniciando conexão com o servidor...';
     this.errorMessage = '';
     this.successMessage = '';
     this.progress = 0;
+    this.cdr.markForCheck();
 
     try {
-      // Obter o token de sessão do Supabase
+      // Pequeno delay para percepção de status
+      await new Promise(r => setTimeout(r, 800));
+      this.ytStatus = 'Extraindo stream do YouTube (isso pode demorar um pouco)...';
+      this.cdr.markForCheck();
+
       const { data: { session } } = await supabase.auth.getSession();
       
       const response = await fetch(`${environment.apiBaseUrl}/api/youtube/convert`, {
@@ -319,21 +351,27 @@ export class AppComponent implements OnInit {
         body: JSON.stringify({ youtubeUrl: this.youtubeUrl })
       });
 
+      this.ytStatus = 'Convertendo para MP3 e salvando na nuvem...';
+      this.cdr.markForCheck();
+
       const result = await response.json();
 
       if (!response.ok) {
         throw new Error(result.error || 'Falha na conversão do YouTube.');
       }
 
+      this.ytStatus = 'Tudo pronto!';
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
-      this.successMessage = 'Vídeo do YouTube convertido com sucesso!';
+      this.successMessage = 'Vídeo convertido com sucesso!';
       this.youtubeUrl = '';
       await this.carregarConversoes();
     } catch (error) {
       this.errorMessage = error instanceof Error ? error.message : 'Erro ao converter YouTube.';
     } finally {
       this.isYtConverting = false;
+      this.ytStatus = '';
+      this.cdr.markForCheck();
     }
   }
 
@@ -408,6 +446,16 @@ export class AppComponent implements OnInit {
     if (error) {
       throw new Error(`Falha ao salvar log: ${error.message}`);
     }
+  }
+
+  resetForm(isYoutube: boolean): void {
+    this.selectedFile = null;
+    this.youtubeUrl = isYoutube ? ' ' : '';
+    this.errorMessage = '';
+    this.successMessage = '';
+    this.outputUrl = '';
+    this.progress = 0;
+    this.cdr.markForCheck();
   }
 
   async carregarConversoes(page: number = 1): Promise<void> {
