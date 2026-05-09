@@ -45,6 +45,7 @@ export class AppComponent implements OnInit {
   isAuthActionLoading = false;
   progress = 0;
   toasts: { message: string, type: 'success' | 'error', id: number }[] = [];
+  isDarkMode = true;
 
   // View state
   currentView: 'converter' | 'profile' | 'reset-password' = 'converter';
@@ -274,22 +275,31 @@ export class AppComponent implements OnInit {
     return toast.id;
   }
 
+  toggleTheme(): void {
+    this.isDarkMode = !this.isDarkMode;
+    if (this.isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    this.cdr.markForCheck();
+  }
+
   async forgotPassword(): Promise<void> {
     if (!this.email) {
-      this.errorMessage = 'Insira seu e-mail.';
-      this.cdr.markForCheck();
+      this.showToast('Por favor, preencha o campo de e-mail primeiro.', 'error');
       return;
     }
-    this.errorMessage = '';
-    this.successMessage = '';
-    const { error } = await supabase.auth.resetPasswordForEmail(this.email, {
-      redirectTo: `${window.location.origin}`
-    });
 
-    if (error) {
-      this.errorMessage = error.message;
-    } else {
-      this.successMessage = 'Link enviado!';
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(this.email, {
+        redirectTo: `${window.location.origin}/?view=reset-password`
+      });
+
+      if (error) throw error;
+      this.showToast('Link de recuperação enviado para seu e-mail!', 'success');
+    } catch (error: any) {
+      this.showToast(error.message || 'Erro ao enviar recuperação', 'error');
     }
     this.cdr.markForCheck();
   }
@@ -431,7 +441,13 @@ export class AppComponent implements OnInit {
 
   private async inicializarFfmpeg(): Promise<void> {
     if (this.ffmpegLoaded) return;
-    await this.ffmpeg.load();
+    
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+    await this.ffmpeg.load({
+      coreURL: `${baseURL}/ffmpeg-core.js`,
+      wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+    });
+    
     this.ffmpegLoaded = true;
   }
 

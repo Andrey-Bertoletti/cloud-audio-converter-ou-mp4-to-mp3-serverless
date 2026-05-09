@@ -70,8 +70,11 @@ async function performCleanup() {
 // Agenda a limpeza para rodar a cada 1 hora
 cron.schedule('0 * * * *', performCleanup);
 
-// Configuração de Segurança
-app.use(helmet()); // Adiciona headers de segurança (HSTS, CSP, etc)
+// Configuração de Segurança Avançada para FFmpeg (COOP/COEP)
+app.use(helmet({
+  crossOriginOpenerPolicy: { policy: "same-origin" },
+  crossOriginEmbedderPolicy: { policy: "require-corp" },
+}));
 
 // Rate Limiting: Máximo de 100 requisições por 15 minutos por IP
 const limiter = rateLimit({
@@ -176,7 +179,17 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     // 3. Baixar e converter usando stream
     await new Promise((resolve, reject) => {
-      ffmpeg(ytdl(youtubeUrl, { quality: 'highestaudio', filter: 'audioonly' }))
+      const stream = ytdl(youtubeUrl, { 
+        quality: 'highestaudio', 
+        filter: 'audioonly',
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          }
+        }
+      });
+
+      ffmpeg(stream)
         .toFormat('mp3')
         .audioBitrate(192)
         .on('error', (err) => {
