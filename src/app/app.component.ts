@@ -1,8 +1,8 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
+import { fetchFile, toBlobURL } from '@ffmpeg/util';
 import { supabase } from './supabase.client';
 import { environment } from '../environments/environment';
 import { User } from '@supabase/supabase-js';
@@ -17,7 +17,8 @@ type Conversao = {
   selector: 'app-root',
   standalone: true,
   imports: [CommonModule, FormsModule],
-  templateUrl: './app.component.html'
+  templateUrl: './app.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush
 })
 export class AppComponent implements OnInit {
   // Auth state
@@ -30,7 +31,16 @@ export class AppComponent implements OnInit {
   isAuthLoading = true;
   authMode: 'login' | 'signup' = 'login';
   newPassword = '';
+  currentPassword = '';
   isYtConverting = false;
+
+  // View state
+  currentView: 'converter' | 'profile' | 'reset-password' = 'converter';
+  
+  // Pagination state
+  currentPage = 1;
+  totalPages = 1;
+  pageSize = 5;
 
   selectedFile: File | null = null;
   isDragging = false;
@@ -45,22 +55,39 @@ export class AppComponent implements OnInit {
   private ffmpeg = new FFmpeg();
   private ffmpegLoaded = false;
 
+  constructor(private cdr: ChangeDetectorRef) {}
+
   async ngOnInit(): Promise<void> {
+    // 1. Detectar se é um fluxo de recuperação de senha
+    const hash = window.location.hash;
+    if (hash && hash.includes('type=recovery')) {
+      this.currentView = 'reset-password';
+    }
+
     const { data: { session } } = await supabase.auth.getSession();
     this.user = session?.user ?? null;
     this.isAuthLoading = false;
 
     if (this.user) {
       await this.carregarConversoes();
+      this.inicializarFfmpeg(); // Inicia em background
     }
 
-    supabase.auth.onAuthStateChange(async (_event, session) => {
+    supabase.auth.onAuthStateChange(async (event, session) => {
       this.user = session?.user ?? null;
+      
+      if (event === 'PASSWORD_RECOVERY') {
+        this.currentView = 'reset-password';
+      }
+
       if (this.user) {
         await this.carregarConversoes();
+        this.inicializarFfmpeg(); // Warmup
       } else {
         this.conversoes = [];
+        this.currentView = 'converter';
       }
+      this.cdr.markForCheck();
     });
   }
 
@@ -132,16 +159,30 @@ export class AppComponent implements OnInit {
     this.authMode = this.authMode === 'login' ? 'signup' : 'login';
     this.errorMessage = '';
     this.successMessage = '';
+    this.cdr.markForCheck();
   }
 
   async updatePassword(): Promise<void> {
     if (!this.newPassword || this.newPassword.length < 6) {
-      this.errorMessage = 'A senha deve ter pelo menos 6 caracteres.';
+      this.errorMessage = 'A nova senha deve ter pelo menos 6 caracteres.';
       return;
     }
 
     this.errorMessage = '';
     this.successMessage = '';
+
+    // Se estiver no perfil (não no reset), validar senha atual
+    if (this.currentView === 'profile') {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: this.user?.email || '',
+        password: this.currentPassword
+      });
+
+      if (signInError) {
+        this.errorMessage = 'Senha atual incorreta.';
+        return;
+      }
+    }
 
     const { error } = await supabase.auth.updateUser({
       password: this.newPassword
@@ -152,6 +193,10 @@ export class AppComponent implements OnInit {
     } else {
       this.successMessage = 'Senha atualizada com sucesso!';
       this.newPassword = '';
+      this.currentPassword = '';
+      if (this.currentView === 'reset-password') {
+        this.currentView = 'converter';
+      }
     }
   }
 
@@ -213,6 +258,7 @@ export class AppComponent implements OnInit {
       await this.inicializarFfmpeg();
       this.ffmpeg.on('progress', ({ progress }) => {
         this.progress = Math.round(progress * 100);
+        this.cdr.markForCheck();
       });
 
       const inputName = this.selectedFile.name;
@@ -306,18 +352,16 @@ export class AppComponent implements OnInit {
     this.errorMessage = '';
     this.successMessage = '';
 
-    if (!file) {
+    if (file && file.type === 'video/mp4') {
+      this.selectedFile = file;
+      this.errorMessage = '';
+      this.outputUrl = '';
+      this.progress = 0;
+    } else {
+      this.errorMessage = 'Por favor, selecione um arquivo MP4 válido.';
       this.selectedFile = null;
-      return;
     }
-
-    if (!file.name.toLowerCase().endsWith('.mp4')) {
-      this.errorMessage = 'Selecione um arquivo .mp4 válido.';
-      this.selectedFile = null;
-      return;
-    }
-
-    this.selectedFile = file;
+    this.cdr.markForCheck();
   }
 
   private async inicializarFfmpeg(): Promise<void> {
@@ -366,21 +410,46 @@ export class AppComponent implements OnInit {
     }
   }
 
-  private async carregarConversoes(): Promise<void> {
+  async carregarConversoes(page: number = 1): Promise<void> {
     if (!this.user) return;
 
-    const { data, error } = await supabase
-      .from('conversoes')
-      .select('id, nome_arquivo, criado_em')
-      .eq('user_id', this.user.id)
-      .order('criado_em', { ascending: false })
-      .limit(5);
+    this.currentPage = page;
+    const { data: { session } } = await supabase.auth.getSession();
 
-    if (error) {
+    try {
+      const response = await fetch(`${environment.apiBaseUrl}/api/conversoes?page=${page}&limit=${this.pageSize}`, {
+        headers: {
+          'Authorization': `Bearer ${session?.access_token}`
+        }
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) throw new Error(result.error);
+
+      this.conversoes = result.data as Conversao[];
+      this.totalPages = result.totalPages;
+      this.cdr.markForCheck();
+    } catch (error) {
       this.errorMessage = 'Não foi possível carregar o histórico.';
-      return;
+      this.cdr.markForCheck();
     }
+  }
 
-    this.conversoes = data as Conversao[];
+  trackByConversao(index: number, item: Conversao): number {
+    return item.id;
+  }
+
+  changePage(delta: number): void {
+    const newPage = this.currentPage + delta;
+    if (newPage >= 1 && newPage <= this.totalPages) {
+      this.carregarConversoes(newPage);
+    }
+  }
+
+  setView(view: 'converter' | 'profile' | 'reset-password'): void {
+    this.currentView = view;
+    this.errorMessage = '';
+    this.successMessage = '';
   }
 }

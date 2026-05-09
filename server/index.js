@@ -125,20 +125,31 @@ app.post('/api/conversoes', async (req, res) => {
 });
 
 app.get('/api/conversoes', async (req, res) => {
-  const user_id = req.user.id;
-  
-  const { data, error } = await supabaseAdmin
-    .from('conversoes')
-    .select('id, nome_arquivo, criado_em')
-    .eq('user_id', user_id)
-    .order('criado_em', { ascending: false })
-    .limit(5);
+  try {
+    const user_id = req.user.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5;
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
 
-  if (error) {
+    const { data, error, count } = await supabaseAdmin
+      .from('conversoes')
+      .select('id, nome_arquivo, criado_em, storage_path', { count: 'exact' })
+      .eq('user_id', user_id)
+      .order('criado_em', { ascending: false })
+      .range(from, to);
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      data: data ?? [],
+      total: count,
+      page,
+      totalPages: Math.ceil(count / limit)
+    });
+  } catch (error) {
     return res.status(500).json({ error: error.message });
   }
-
-  return res.status(200).json(data ?? []);
 });
 
 app.post('/api/youtube/convert', async (req, res) => {
