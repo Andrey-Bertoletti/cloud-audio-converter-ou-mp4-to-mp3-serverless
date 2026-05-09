@@ -249,5 +249,7 @@ app.post('/api/youtube/convert', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`API protegida disponível em http://localhost:${port}`);
+  const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
+  console.log(`[Backend] Rodando em modo: ${mode}`);
+  console.log(`[Backend] API disponível na porta: ${port}`);
 });

@@ -446,6 +446,7 @@ export class AppComponent implements OnInit {
     await this.ffmpeg.load({
       coreURL: `${baseURL}/ffmpeg-core.js`,
       wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+      workerURL: `${baseURL}/ffmpeg-core.worker.js`
     });
     
     this.ffmpegLoaded = true;

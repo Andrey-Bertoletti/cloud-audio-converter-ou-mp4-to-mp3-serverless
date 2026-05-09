@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: mp4-to-mp3-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: FRONTEND_URL
+        fromContext: frontend_url
+      - key: SUPABASE_URL
+        fromContext: supabase_url
+      - key: SUPABASE_ANON_KEY
+        fromContext: supabase_anon_key
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        fromContext: supabase_service_role_key
