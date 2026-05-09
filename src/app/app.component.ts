@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile, toBlobURL } from '@ffmpeg/util';
+import { fetchFile } from '@ffmpeg/util';
 import { supabase } from './supabase.client';
 import { environment } from '../environments/environment';
 import { User } from '@supabase/supabase-js';
@@ -32,8 +32,18 @@ export class AppComponent implements OnInit {
   authMode: 'login' | 'signup' = 'login';
   newPassword = '';
   currentPassword = '';
+  
+  // Tab State
+  currentTab: 'local' | 'youtube' = 'local';
+  
+  // Converting state
   isYtConverting = false;
-  ytStatus = ''; // Status detalhado para YouTube
+  ytStatus = '';
+  isConverting = false;
+  isSavingProfile = false;
+  isUpdatingPassword = false;
+  isAuthActionLoading = false;
+  progress = 0;
 
   // View state
   currentView: 'converter' | 'profile' | 'reset-password' = 'converter';
@@ -45,8 +55,6 @@ export class AppComponent implements OnInit {
 
   selectedFile: File | null = null;
   isDragging = false;
-  isConverting = false;
-  progress = 0;
   errorMessage = '';
   successMessage = '';
   outputUrl: string | null = null;
@@ -59,7 +67,6 @@ export class AppComponent implements OnInit {
   constructor(public cdr: ChangeDetectorRef) {}
 
   async ngOnInit(): Promise<void> {
-    // 1. Detectar se é um fluxo de recuperação de senha
     const hash = window.location.hash;
     if (hash && hash.includes('type=recovery')) {
       this.currentView = 'reset-password';
@@ -71,7 +78,7 @@ export class AppComponent implements OnInit {
 
     if (this.user) {
       await this.carregarConversoes();
-      this.inicializarFfmpeg(); // Inicia em background
+      this.inicializarFfmpeg(); 
     }
 
     supabase.auth.onAuthStateChange(async (event, session) => {
@@ -83,7 +90,7 @@ export class AppComponent implements OnInit {
 
       if (this.user) {
         await this.carregarConversoes();
-        this.inicializarFfmpeg(); // Warmup
+        this.inicializarFfmpeg();
       } else {
         this.conversoes = [];
         this.currentView = 'converter';
@@ -94,11 +101,13 @@ export class AppComponent implements OnInit {
 
   async signIn(): Promise<void> {
     this.errorMessage = '';
+    this.isAuthActionLoading = true;
     const { error } = await supabase.auth.signInWithPassword({
       email: this.email,
       password: this.password
     });
     if (error) this.errorMessage = error.message;
+    this.isAuthActionLoading = false;
     this.cdr.markForCheck();
   }
 
@@ -117,12 +126,10 @@ export class AppComponent implements OnInit {
 
   async signUp(): Promise<void> {
     this.errorMessage = '';
-    
     if (this.password !== this.confirmPassword) {
       this.errorMessage = 'As senhas não coincidem.';
       return;
     }
-
     if (!this.name) {
       this.errorMessage = 'O nome é obrigatório.';
       return;
@@ -131,11 +138,7 @@ export class AppComponent implements OnInit {
     const { error } = await supabase.auth.signUp({
       email: this.email,
       password: this.password,
-      options: {
-        data: {
-          display_name: this.name
-        }
-      }
+      options: { data: { display_name: this.name } }
     });
 
     if (error) this.errorMessage = error.message;
@@ -148,20 +151,23 @@ export class AppComponent implements OnInit {
   }
 
   async updateProfile(): Promise<void> {
+    this.errorMessage = '';
+    this.successMessage = '';
     if (!this.name) {
       this.errorMessage = 'O nome não pode estar vazio.';
       return;
     }
 
-    this.errorMessage = '';
-    this.successMessage = '';
+    this.isSavingProfile = true;
+    this.cdr.markForCheck();
 
     const { error } = await supabase.auth.updateUser({
       data: { display_name: this.name }
     });
 
+    this.isSavingProfile = false;
     if (error) {
-      this.errorMessage = error.message;
+      this.errorMessage = 'Erro ao atualizar: ' + error.message;
     } else {
       this.successMessage = 'Perfil atualizado com sucesso!';
     }
@@ -189,23 +195,23 @@ export class AppComponent implements OnInit {
     this.errorMessage = '';
     this.successMessage = '';
 
-    // Se estiver no perfil (não no reset), validar senha atual
     if (this.currentView === 'profile') {
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: this.user?.email || '',
         password: this.currentPassword
       });
-
       if (signInError) {
         this.errorMessage = 'Senha atual incorreta.';
         return;
       }
     }
 
-    const { error } = await supabase.auth.updateUser({
-      password: this.newPassword
-    });
+    this.isUpdatingPassword = true;
+    this.cdr.markForCheck();
 
+    const { error } = await supabase.auth.updateUser({ password: this.newPassword });
+    
+    this.isUpdatingPassword = false;
     if (error) {
       this.errorMessage = error.message;
     } else {
@@ -216,32 +222,25 @@ export class AppComponent implements OnInit {
         this.currentView = 'converter';
       }
     }
+    this.cdr.markForCheck();
   }
 
   async forgotPassword(): Promise<void> {
     if (!this.email) {
-      this.errorMessage = 'Insira seu e-mail para recuperar a senha.';
+      this.errorMessage = 'Insira seu e-mail.';
       this.cdr.markForCheck();
       return;
     }
-
     this.errorMessage = '';
     this.successMessage = '';
-
     const { error } = await supabase.auth.resetPasswordForEmail(this.email, {
       redirectTo: `${window.location.origin}`
     });
 
     if (error) {
-      if (error.message.toLowerCase().includes('rate limit')) {
-        this.errorMessage = 'Limite de e-mails atingido (3 por hora). Aguarde ou configure seu SMTP.';
-      } else if (error.message.toLowerCase().includes('not found')) {
-        this.errorMessage = 'E-mail não encontrado em nossa base de dados.';
-      } else {
-        this.errorMessage = 'Erro ao enviar: Verifique o e-mail ou tente mais tarde.';
-      }
+      this.errorMessage = error.message;
     } else {
-      this.successMessage = 'Link de recuperação enviado com sucesso!';
+      this.successMessage = 'Link enviado!';
     }
     this.cdr.markForCheck();
   }
@@ -270,9 +269,7 @@ export class AppComponent implements OnInit {
   }
 
   async converterArquivo(): Promise<void> {
-    if (!this.selectedFile || this.isConverting) {
-      return;
-    }
+    if (!this.selectedFile || this.isConverting) return;
 
     this.isConverting = true;
     this.errorMessage = '';
@@ -292,18 +289,7 @@ export class AppComponent implements OnInit {
       const outputName = `${baseName}.mp3`;
 
       await this.ffmpeg.writeFile(inputName, await fetchFile(this.selectedFile));
-      await this.ffmpeg.exec([
-        '-i',
-        inputName,
-        '-vn',
-        '-ar',
-        '44100',
-        '-ac',
-        '2',
-        '-b:a',
-        '192k',
-        outputName
-      ]);
+      await this.ffmpeg.exec(['-i', inputName, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', outputName]);
 
       const mp3Data = await this.ffmpeg.readFile(outputName);
       const mp3Blob = new Blob([mp3Data as Uint8Array], { type: 'audio/mpeg' });
@@ -314,34 +300,25 @@ export class AppComponent implements OnInit {
       const storagePath = await this.uploadParaStorage(outputName, mp3Blob);
       await this.salvarLogConversao(outputName, storagePath);
       await this.carregarConversoes();
-
-      this.successMessage = 'Conversão concluída com sucesso.';
+      this.successMessage = 'Concluído!';
     } catch (error) {
-      this.errorMessage =
-        error instanceof Error ? error.message : 'Falha ao converter arquivo.';
+      this.errorMessage = error instanceof Error ? error.message : 'Falha na conversão.';
     } finally {
       this.isConverting = false;
+      this.cdr.markForCheck();
     }
   }
 
   async converterYouTube(): Promise<void> {
     if (!this.youtubeUrl || this.isYtConverting) return;
-
     this.isYtConverting = true;
-    this.ytStatus = 'Iniciando conexão com o servidor...';
+    this.ytStatus = 'Iniciando...';
     this.errorMessage = '';
     this.successMessage = '';
-    this.progress = 0;
     this.cdr.markForCheck();
 
     try {
-      // Pequeno delay para percepção de status
-      await new Promise(r => setTimeout(r, 800));
-      this.ytStatus = 'Extraindo stream do YouTube (isso pode demorar um pouco)...';
-      this.cdr.markForCheck();
-
       const { data: { session } } = await supabase.auth.getSession();
-      
       const response = await fetch(`${environment.apiBaseUrl}/api/youtube/convert`, {
         method: 'POST',
         headers: {
@@ -351,23 +328,15 @@ export class AppComponent implements OnInit {
         body: JSON.stringify({ youtubeUrl: this.youtubeUrl })
       });
 
-      this.ytStatus = 'Convertendo para MP3 e salvando na nuvem...';
-      this.cdr.markForCheck();
-
       const result = await response.json();
+      if (!response.ok) throw new Error(result.error);
 
-      if (!response.ok) {
-        throw new Error(result.error || 'Falha na conversão do YouTube.');
-      }
-
-      this.ytStatus = 'Tudo pronto!';
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
-      this.successMessage = 'Vídeo convertido com sucesso!';
-      this.youtubeUrl = '';
+      this.successMessage = 'Sucesso!';
       await this.carregarConversoes();
     } catch (error) {
-      this.errorMessage = error instanceof Error ? error.message : 'Erro ao converter YouTube.';
+      this.errorMessage = error instanceof Error ? error.message : 'Erro YouTube.';
     } finally {
       this.isYtConverting = false;
       this.ytStatus = '';
@@ -376,128 +345,91 @@ export class AppComponent implements OnInit {
   }
 
   baixarArquivo(): void {
-    if (!this.outputUrl) {
-      return;
-    }
-
+    if (!this.outputUrl) return;
     const link = document.createElement('a');
     link.href = this.outputUrl;
-    link.download = this.outputName || 'audio-convertido.mp3';
+    link.download = this.outputName || 'audio.mp3';
     link.click();
   }
 
   private aplicarArquivo(file?: File): void {
-    this.errorMessage = '';
-    this.successMessage = '';
-
     if (file && file.type === 'video/mp4') {
       this.selectedFile = file;
-      this.errorMessage = '';
-      this.outputUrl = '';
+      this.outputUrl = null;
       this.progress = 0;
     } else {
-      this.errorMessage = 'Por favor, selecione um arquivo MP4 válido.';
-      this.selectedFile = null;
+      this.errorMessage = 'Arquivo inválido.';
     }
     this.cdr.markForCheck();
   }
 
   private async inicializarFfmpeg(): Promise<void> {
-    if (this.ffmpegLoaded) {
-      return;
-    }
-
+    if (this.ffmpegLoaded) return;
     await this.ffmpeg.load();
     this.ffmpegLoaded = true;
   }
 
   private async uploadParaStorage(fileName: string, mp3Blob: Blob): Promise<string> {
-    if (!this.user) throw new Error('Usuário não autenticado.');
-    
-    const timestamp = Date.now();
-    const uniquePath = `${this.user.id}/${timestamp}-${fileName}`;
-
-    const { error } = await supabase.storage
-      .from('converted-audio')
-      .upload(uniquePath, mp3Blob, {
-        contentType: 'audio/mpeg',
-        upsert: false
-      });
-
-    if (error) {
-      throw new Error(`Falha no upload para Storage: ${error.message}`);
-    }
-
-    return uniquePath;
+    if (!this.user) throw new Error('Auth required');
+    const path = `${this.user.id}/${Date.now()}-${fileName}`;
+    const { error } = await supabase.storage.from('converted-audio').upload(path, mp3Blob);
+    if (error) throw error;
+    return path;
   }
 
-  private async salvarLogConversao(
-    nomeArquivo: string,
-    storagePath: string
-  ): Promise<void> {
+  private async salvarLogConversao(nomeArquivo: string, storagePath: string): Promise<void> {
     if (!this.user) return;
-
-    const { error } = await supabase.from('conversoes').insert({
+    await supabase.from('conversoes').insert({
       nome_arquivo: nomeArquivo,
       storage_path: storagePath,
       user_id: this.user.id
     });
-
-    if (error) {
-      throw new Error(`Falha ao salvar log: ${error.message}`);
-    }
   }
 
-  resetForm(isYoutube: boolean): void {
+  resetForm(tab: 'local' | 'youtube'): void {
+    this.currentTab = tab;
+    this.youtubeUrl = '';
     this.selectedFile = null;
-    this.youtubeUrl = isYoutube ? ' ' : '';
+    this.outputUrl = null;
+    this.progress = 0;
     this.errorMessage = '';
     this.successMessage = '';
-    this.outputUrl = '';
-    this.progress = 0;
     this.cdr.markForCheck();
   }
 
   async carregarConversoes(page: number = 1): Promise<void> {
     if (!this.user) return;
-
     this.currentPage = page;
-    const { data: { session } } = await supabase.auth.getSession();
-
     try {
+      const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(`${environment.apiBaseUrl}/api/conversoes?page=${page}&limit=${this.pageSize}`, {
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`
-        }
+        headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
-
       const result = await response.json();
-
       if (!response.ok) throw new Error(result.error);
-
-      this.conversoes = result.data as Conversao[];
+      this.conversoes = result.data;
       this.totalPages = result.totalPages;
       this.cdr.markForCheck();
-    } catch (error) {
-      this.errorMessage = 'Não foi possível carregar o histórico.';
+    } catch (e) {
+      this.errorMessage = 'Erro ao carregar histórico.';
       this.cdr.markForCheck();
     }
   }
 
-  trackByConversao(index: number, item: Conversao): number {
-    return item.id;
-  }
+  trackByConversao(index: number, item: Conversao): number { return item.id; }
 
   changePage(delta: number): void {
     const newPage = this.currentPage + delta;
-    if (newPage >= 1 && newPage <= this.totalPages) {
-      this.carregarConversoes(newPage);
-    }
+    if (newPage >= 1 && newPage <= this.totalPages) this.carregarConversoes(newPage);
   }
 
   setView(view: 'converter' | 'profile' | 'reset-password'): void {
     this.currentView = view;
     this.errorMessage = '';
     this.successMessage = '';
+    if (view === 'profile' && this.user) {
+      this.name = this.user.user_metadata?.['display_name'] || '';
+    }
+    this.cdr.markForCheck();
   }
 }

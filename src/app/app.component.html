@@ -1,178 +1,190 @@
 <div class="flex min-h-screen flex-col bg-[#020617] text-slate-300 selection:bg-indigo-500/30 font-sans">
-  <!-- Soft Background Glows -->
+  <!-- Dynamic Gradient Background -->
   <div class="fixed inset-0 overflow-hidden pointer-events-none">
-    <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-indigo-500/10 blur-[120px] rounded-full animate-pulse"></div>
-    <div class="absolute bottom-[-10%] right-[-10%] w-[400px] h-[400px] bg-blue-500/10 blur-[120px] rounded-full"></div>
+    <div class="absolute top-[-10%] left-[-10%] w-[600px] h-[600px] bg-indigo-600/10 blur-[140px] rounded-full animate-pulse"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-600/10 blur-[140px] rounded-full"></div>
+    <div class="absolute top-[20%] right-[10%] w-[300px] h-[300px] bg-emerald-500/5 blur-[100px] rounded-full"></div>
   </div>
 
   <!-- Navbar -->
-  <header class="sticky top-0 z-50 border-b border-white/[0.05] bg-[#020617]/70 backdrop-blur-md">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-      <div class="flex items-center gap-3 cursor-pointer group" (click)="setView('converter')">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white font-bold shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-all">CA</div>
-        <span class="text-xl font-bold tracking-tight text-white">CloudAudio<span class="text-indigo-500">.</span></span>
+  <header class="sticky top-0 z-50 border-b border-white/[0.05] bg-[#020617]/70 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+      <div class="flex items-center gap-4 cursor-pointer group" (click)="setView('converter')">
+        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 via-indigo-600 to-blue-700 text-white font-black shadow-xl shadow-indigo-500/20 group-hover:scale-105 transition-all">CA</div>
+        <div class="flex flex-col">
+          <span class="text-xl font-black tracking-tighter text-white leading-tight">CloudAudio<span class="text-indigo-500">.</span></span>
+          <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Premium Converter</span>
+        </div>
       </div>
       
       <div class="flex items-center gap-6">
-        <div *ngIf="user" class="hidden items-center gap-4 sm:flex">
-          <button (click)="setView('profile')" class="text-xs font-semibold text-slate-400 hover:text-white transition-colors">Configurações</button>
-          <button (click)="signOut()" class="rounded-lg bg-white/5 border border-white/10 px-4 py-2 text-xs font-bold text-white hover:bg-white/10 transition-all">Sair</button>
+        <div *ngIf="user" class="flex items-center gap-2">
+          <button (click)="setView('profile')" class="flex items-center gap-2 rounded-xl bg-white/[0.03] border border-white/[0.08] px-4 py-2 text-xs font-bold text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            Configurações
+          </button>
+          <button (click)="signOut()" class="rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs font-bold text-red-400 hover:bg-red-500 hover:text-white transition-all">Sair</button>
         </div>
       </div>
     </div>
   </header>
 
-  <!-- Content -->
-  <main class="flex-1 flex items-center justify-center px-4 py-12 relative z-10">
-    <div class="w-full max-w-[440px]">
+  <!-- Main Content -->
+  <main class="flex-1 flex items-center justify-center px-6 py-12 relative z-10">
+    <div class="w-full max-w-[1100px]">
       
       <!-- AUTH VIEWS -->
-      <div *ngIf="!user && !isAuthLoading && currentView !== 'reset-password'" class="animate-in fade-in slide-in-from-bottom-8 duration-700">
-        <div class="rounded-3xl bg-white/[0.02] border border-white/[0.08] p-8 md:p-10 backdrop-blur-xl shadow-2xl">
-          
+      <div *ngIf="!user && !isAuthLoading && currentView !== 'reset-password'" class="mx-auto w-full max-w-[420px] animate-in fade-in slide-in-from-bottom-12 duration-1000">
+        <div class="rounded-[40px] bg-white/[0.02] border border-white/[0.1] p-10 md:p-12 backdrop-blur-2xl shadow-2xl">
           <div class="text-center mb-10">
-            <h2 class="text-3xl font-bold text-white tracking-tight">
-              {{ authMode === 'login' ? 'Bem-vindo' : 'Criar conta' }}
+            <div class="inline-flex items-center rounded-full bg-indigo-500/10 border border-indigo-500/20 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-indigo-400 mb-6">Portal de Acesso</div>
+            <h2 class="text-4xl font-black text-white tracking-tight">
+              {{ authMode === 'login' ? 'Bem-vindo de volta' : 'Crie sua conta' }}
             </h2>
-            <p class="text-slate-500 mt-2 text-sm">
-              {{ authMode === 'login' ? 'Entre com suas credenciais para continuar.' : 'Cadastre-se para começar a converter.' }}
-            </p>
           </div>
           
           <div class="space-y-6">
-            <div *ngIf="authMode === 'signup'" class="animate-in fade-in slide-in-from-top-2">
-              <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 ml-1">Nome Completo</label>
-              <input type="text" [(ngModel)]="name" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all" placeholder="Nome Sobrenome" />
+            <div *ngIf="authMode === 'signup'">
+              <label class="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 mb-2.5 ml-1">Nome Completo</label>
+              <input type="text" [(ngModel)]="name" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" />
             </div>
 
             <div>
-              <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 ml-1">Endereço de E-mail</label>
-              <input type="email" [(ngModel)]="email" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all" placeholder="voce@exemplo.com" />
+              <label class="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 mb-2.5 ml-1">E-mail</label>
+              <input type="email" [(ngModel)]="email" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" />
             </div>
             
-            <div class="space-y-6">
-              <div>
-                <div class="flex items-center justify-between mb-2 ml-1">
-                  <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500">Sua Senha</label>
-                  <button *ngIf="authMode === 'login'" (click)="forgotPassword()" class="text-[11px] font-medium text-indigo-400 hover:text-indigo-300 transition-colors">Esqueceu a senha?</button>
-                </div>
-                <input type="password" [(ngModel)]="password" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all" placeholder="••••••••" />
+            <div>
+              <div class="flex items-center justify-between mb-2.5 ml-1">
+                <label class="block text-[10px] font-black uppercase tracking-[0.15em] text-slate-500">Senha</label>
+                <button *ngIf="authMode === 'login'" (click)="forgotPassword()" class="text-[10px] font-black uppercase text-indigo-400 hover:text-indigo-300">Esqueceu?</button>
               </div>
-              <div *ngIf="authMode === 'signup'">
-                <label class="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-2 ml-1">Confirmar Senha</label>
-                <input type="password" [(ngModel)]="confirmPassword" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3.5 text-sm text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all" placeholder="••••••••" />
-              </div>
+              <input type="password" [(ngModel)]="password" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" />
             </div>
 
-            <button *ngIf="authMode === 'login'" (click)="signIn()" class="w-full rounded-xl bg-indigo-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 hover:shadow-indigo-500/40 transition-all active:scale-[0.98]">Acessar Painel</button>
-            <button *ngIf="authMode === 'signup'" (click)="signUp()" class="w-full rounded-xl bg-indigo-600 py-3.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 hover:shadow-indigo-500/40 transition-all active:scale-[0.98]">Criar Conta Grátis</button>
+            <button (click)="authMode === 'login' ? signIn() : signUp()" [disabled]="isAuthActionLoading" class="w-full rounded-2xl bg-indigo-600 py-4.5 text-sm font-black uppercase tracking-widest text-white shadow-2xl shadow-indigo-600/30 hover:bg-indigo-500 disabled:opacity-50 transition-all flex items-center justify-center gap-3">
+              <svg *ngIf="isAuthActionLoading" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+              {{ isAuthActionLoading ? 'Processando...' : (authMode === 'login' ? 'Entrar' : 'Cadastrar') }}
+            </button>
 
-            <!-- Divider -->
-            <div class="relative py-4">
+            <div class="relative py-2">
               <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-white/5"></div></div>
-              <div class="relative flex justify-center text-[10px] uppercase font-bold tracking-widest text-slate-600"><span class="bg-[#020617] px-4">Ou continue com</span></div>
+              <div class="relative flex justify-center text-[9px] uppercase font-black tracking-[0.3em] text-slate-600"><span class="bg-[#0b1224] px-4">Ou</span></div>
             </div>
 
-            <!-- Google Button -->
-            <button (click)="signInWithGoogle()" class="w-full rounded-xl bg-white/[0.03] border border-white/10 py-3.5 flex items-center justify-center gap-3 hover:bg-white/[0.08] transition-all active:scale-[0.98] group">
-              <svg class="h-5 w-5" viewBox="0 0 24 24"><path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" style="fill: #4285F4"/><path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" style="fill: #34A853"/><path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" style="fill: #FBBC05"/><path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" style="fill: #EA4335"/></svg>
-              <span class="text-sm font-semibold text-white group-hover:text-indigo-400">Google</span>
+            <button (click)="signInWithGoogle()" class="w-full rounded-2xl bg-white/[0.03] border border-white/10 py-4 flex items-center justify-center gap-3 hover:bg-white/[0.08] transition-all">
+              <svg class="h-5 w-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+              <span class="text-xs font-bold text-white uppercase tracking-widest">Google</span>
             </button>
 
             <div class="pt-6 text-center">
-              <button (click)="toggleAuthMode()" class="text-xs font-medium text-slate-500 hover:text-white transition-colors">
-                {{ authMode === 'login' ? 'Não tem uma conta? Cadastre-se' : 'Já possui uma conta? Entre aqui' }}
+              <button (click)="toggleAuthMode()" class="text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-white transition-colors">
+                {{ authMode === 'login' ? 'Criar conta' : 'Já tenho conta' }}
               </button>
             </div>
             
-            <div *ngIf="errorMessage" class="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-center animate-in shake-in">
-              <p class="text-xs font-semibold text-red-400">{{ errorMessage }}</p>
-            </div>
-            <div *ngIf="successMessage" class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center animate-in zoom-in">
-              <p class="text-xs font-semibold text-emerald-400">{{ successMessage }}</p>
-            </div>
+            <div *ngIf="errorMessage" class="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 text-center text-xs font-bold text-red-400">{{ errorMessage }}</div>
+            <div *ngIf="successMessage" class="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center text-xs font-bold text-emerald-400">{{ successMessage }}</div>
           </div>
         </div>
       </div>
 
       <!-- DASHBOARD -->
-      <div *ngIf="user && currentView === 'converter'" class="animate-in fade-in slide-in-from-bottom-8 duration-700 w-[700px] max-w-full mx-auto">
-        <div class="rounded-3xl bg-white/[0.02] border border-white/[0.08] p-8 md:p-10 backdrop-blur-xl shadow-2xl">
-          <div class="mb-10">
-            <h1 class="text-3xl font-bold text-white">Olá, {{ userDisplayName }}!</h1>
-            <p class="text-slate-500 mt-1">O que vamos converter hoje?</p>
-          </div>
-
-          <div class="flex p-1.5 bg-white/[0.03] rounded-2xl mb-8 border border-white/[0.05]">
-            <button (click)="resetForm(false)" [class.bg-slate-800]="!youtubeUrl.trim()" [class.text-white]="!youtubeUrl.trim()" [class.text-slate-500]="youtubeUrl.trim()" class="flex-1 py-2.5 text-xs font-bold rounded-xl transition-all">Arquivo Local</button>
-            <button (click)="resetForm(true)" [class.bg-slate-800]="youtubeUrl.trim() || youtubeUrl === ' '" [class.text-white]="youtubeUrl.trim() || youtubeUrl === ' '" [class.text-slate-500]="!youtubeUrl.trim()" class="flex-1 py-2.5 text-xs font-bold rounded-xl transition-all">YouTube Link</button>
-          </div>
-
-          <div *ngIf="!youtubeUrl.trim()" class="space-y-8">
-            <div class="group relative rounded-3xl border-2 border-dashed border-white/[0.08] p-12 text-center hover:border-indigo-500/40 hover:bg-indigo-500/[0.02] transition-all cursor-pointer" (dragover)="onDragOver($event)" (dragleave)="onDragLeave($event)" (drop)="onDrop($event)">
-              <div class="mx-auto h-16 w-16 bg-white/[0.03] text-indigo-400 rounded-2xl flex items-center justify-center mb-4 group-hover:scale-105 transition-all">
-                <svg class="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+      <div *ngIf="user && currentView === 'converter'" class="animate-in fade-in duration-700">
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          <!-- Tool Card -->
+          <div class="lg:col-span-7">
+            <div class="rounded-[40px] bg-white/[0.02] border border-white/[0.1] p-10 backdrop-blur-2xl shadow-2xl">
+              <div class="mb-10">
+                <h1 class="text-3xl font-black text-white tracking-tight">Painel de Controle</h1>
+                <p class="text-slate-500 mt-2 text-sm font-medium">Olá, {{ userDisplayName }}! Selecione o tipo de conversão.</p>
               </div>
-              <p class="text-sm font-medium text-slate-400">Arraste seu vídeo MP4 para cá</p>
-              <label class="mt-6 inline-flex cursor-pointer rounded-xl bg-white/[0.05] border border-white/[0.1] px-6 py-2.5 text-xs font-bold text-white hover:bg-white/[0.1] transition-all">
-                Selecionar Arquivo
-                <input class="hidden" type="file" accept=".mp4" (change)="onFileInputChange($event)" />
-              </label>
-              <div *ngIf="selectedFile" class="mt-6 text-indigo-400 text-xs font-bold">{{ selectedFile.name }}</div>
-            </div>
-            
-            <div class="flex gap-4">
-              <button (click)="converterArquivo()" [disabled]="!selectedFile || isConverting" class="flex-1 rounded-xl bg-indigo-600 py-4 text-sm font-bold text-white hover:bg-indigo-500 disabled:opacity-20 transition-all shadow-lg shadow-indigo-500/20">
-                {{ isConverting ? 'Convertendo...' : 'Converter MP4 para MP3' }}
-              </button>
-              <button (click)="baixarArquivo()" [disabled]="!outputUrl" class="rounded-xl bg-white/[0.05] border border-white/[0.1] px-8 py-4 text-sm font-bold text-white hover:bg-white/[0.1] disabled:opacity-20 transition-all">Baixar</button>
-            </div>
-          </div>
 
-          <div *ngIf="youtubeUrl.trim() || youtubeUrl === ' '" class="space-y-6">
-            <div class="rounded-3xl bg-red-500/[0.02] border border-red-500/[0.08] p-8 text-center">
-              <input type="text" [(ngModel)]="youtubeUrl" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-red-500/50 transition-all mb-4 placeholder:text-slate-600" placeholder="Cole o link do YouTube aqui..." />
-              <button (click)="converterYouTube()" [disabled]="!youtubeUrl.trim() || isYtConverting" class="w-full rounded-xl bg-red-600 py-4 text-sm font-bold text-white hover:bg-red-500 disabled:opacity-20 transition-all shadow-lg shadow-red-500/20">
-                {{ isYtConverting ? 'Extraindo áudio...' : 'Converter YouTube para MP3' }}
-              </button>
-              <button *ngIf="outputUrl" (click)="baixarArquivo()" class="w-full rounded-xl bg-white/[0.05] border border-white/[0.1] py-4 text-sm font-bold text-white hover:bg-white/[0.1] transition-all mt-4">Baixar Áudio Agora</button>
-            </div>
-          </div>
-
-          <!-- Progress -->
-          <div *ngIf="isConverting || isYtConverting" class="mt-10 animate-in slide-in-from-top-4">
-            <div class="flex items-center justify-between mb-2">
-              <span class="text-xs font-bold text-indigo-400 uppercase tracking-widest">{{ isYtConverting ? 'Status: ' + ytStatus : 'Progresso da Conversão' }}</span>
-              <span class="text-xs font-bold text-white">{{ isYtConverting ? '' : progress + '%' }}</span>
-            </div>
-            <div *ngIf="!isYtConverting" class="h-1.5 w-full bg-white/[0.05] rounded-full overflow-hidden">
-              <div class="h-full bg-indigo-500 transition-all duration-300" [style.width.%]="progress"></div>
-            </div>
-          </div>
-
-          <div *ngIf="errorMessage" class="mt-8 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-center text-xs font-semibold text-red-400">{{ errorMessage }}</div>
-          <div *ngIf="successMessage" class="mt-8 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center text-xs font-semibold text-emerald-400">{{ successMessage }}</div>
-
-          <div class="mt-12 border-t border-white/[0.05] pt-10">
-            <div class="flex items-center justify-between mb-8">
-              <h2 class="text-xl font-bold text-white">Histórico</h2>
-              <div class="flex items-center gap-4">
-                 <button (click)="changePage(-1)" [disabled]="currentPage <= 1" class="text-slate-500 hover:text-white disabled:opacity-20 transition-colors"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 19l-7-7 7-7"/></svg></button>
-                 <span class="text-[11px] font-bold text-slate-500 uppercase tracking-widest">{{ currentPage }} / {{ totalPages }}</span>
-                 <button (click)="changePage(1)" [disabled]="currentPage >= totalPages" class="text-slate-500 hover:text-white disabled:opacity-20 transition-colors"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg></button>
+              <!-- Tabs -->
+              <div class="flex p-2 bg-white/[0.03] rounded-[24px] mb-10 border border-white/[0.05]">
+                <button (click)="resetForm('local')" [class.bg-indigo-600]="currentTab === 'local'" [class.text-white]="currentTab === 'local'" class="flex-1 py-4 text-[11px] font-black uppercase tracking-widest rounded-[18px] transition-all">📁 Arquivo Local</button>
+                <button (click)="resetForm('youtube')" [class.bg-red-600]="currentTab === 'youtube'" [class.text-white]="currentTab === 'youtube'" class="flex-1 py-4 text-[11px] font-black uppercase tracking-widest rounded-[18px] transition-all">🎬 YouTube</button>
               </div>
+
+              <!-- Local Tool -->
+              <div *ngIf="currentTab === 'local'" class="space-y-8 animate-in fade-in">
+                <div class="group relative rounded-[32px] border-2 border-dashed border-white/[0.1] p-16 text-center hover:border-indigo-500/50 hover:bg-indigo-500/[0.03] transition-all cursor-pointer" (dragover)="onDragOver($event)" (dragleave)="onDragLeave($event)" (drop)="onDrop($event)">
+                  <div class="mx-auto h-20 w-20 bg-indigo-500/10 text-indigo-400 rounded-3xl flex items-center justify-center mb-6 group-hover:scale-110 transition-all">
+                    <svg class="h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                  </div>
+                  <p class="text-lg font-bold text-white">Arraste seu MP4 para cá</p>
+                  <label class="mt-8 inline-flex cursor-pointer rounded-2xl bg-indigo-600 px-8 py-3.5 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-500 transition-all">
+                    Selecionar Arquivo
+                    <input class="hidden" type="file" accept=".mp4" (change)="onFileInputChange($event)" />
+                  </label>
+                  <div *ngIf="selectedFile" class="mt-8 text-indigo-400 text-xs font-bold">{{ selectedFile.name }}</div>
+                </div>
+                
+                <div class="flex gap-4">
+                  <button (click)="converterArquivo()" [disabled]="!selectedFile || isConverting" class="flex-[2] rounded-2xl bg-indigo-600 py-5 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-indigo-600/20 disabled:opacity-50 transition-all flex items-center justify-center gap-3">
+                    <svg *ngIf="isConverting" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    {{ isConverting ? 'Convertendo...' : 'Converter MP4' }}
+                  </button>
+                  <button (click)="baixarArquivo()" [disabled]="!outputUrl" class="flex-1 rounded-2xl bg-white/5 border border-white/10 px-8 py-5 text-sm font-black uppercase tracking-widest text-white disabled:opacity-20 transition-all">Baixar</button>
+                </div>
+              </div>
+
+              <!-- YouTube Tool -->
+              <div *ngIf="currentTab === 'youtube'" class="space-y-6 animate-in fade-in">
+                <div class="rounded-[32px] bg-red-500/[0.03] border border-red-500/[0.1] p-10">
+                  <div class="flex items-center gap-4 mb-6 text-red-500"><svg class="h-8 w-8" fill="currentColor" viewBox="0 0 24 24"><path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/></svg><h3 class="text-xl font-black text-white">YouTube to MP3</h3></div>
+                  <input type="text" [(ngModel)]="youtubeUrl" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-6 py-4.5 text-sm text-white focus:outline-none focus:border-red-500/50 transition-all mb-6" placeholder="https://youtube.com/watch?v=..." />
+                  <button (click)="converterYouTube()" [disabled]="!youtubeUrl.trim() || isYtConverting" class="w-full rounded-2xl bg-red-600 py-5 text-sm font-black uppercase tracking-widest text-white shadow-xl shadow-red-600/30 disabled:opacity-50 transition-all flex items-center justify-center gap-3">
+                    <svg *ngIf="isYtConverting" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    {{ isYtConverting ? 'Processando...' : 'Extrair Áudio' }}
+                  </button>
+                  <button *ngIf="outputUrl" (click)="baixarArquivo()" class="w-full rounded-2xl bg-white/10 border border-white/10 py-5 text-sm font-black uppercase tracking-widest text-white mt-4 transition-all">Baixar MP3 Agora</button>
+                </div>
+              </div>
+
+              <!-- Progress -->
+              <div *ngIf="isConverting || isYtConverting" class="mt-12 p-8 rounded-3xl bg-white/[0.03] border border-white/[0.05]">
+                <div class="flex items-center justify-between mb-4">
+                  <span class="text-xs font-black text-indigo-400 uppercase tracking-widest">{{ isYtConverting ? ytStatus : 'Progresso' }}</span>
+                  <span class="text-sm font-black text-white">{{ isYtConverting ? '' : progress + '%' }}</span>
+                </div>
+                <div class="h-2 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div class="h-full bg-indigo-500 transition-all duration-300" [style.width.%]="isYtConverting ? 100 : progress"></div>
+                </div>
+              </div>
+
+              <div *ngIf="errorMessage" class="mt-8 p-5 rounded-2xl bg-red-500/10 border border-red-500/20 text-center text-xs font-black text-red-400">{{ errorMessage }}</div>
+              <div *ngIf="successMessage" class="mt-8 p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center text-xs font-black text-emerald-400">{{ successMessage }}</div>
             </div>
-            
-            <div class="space-y-3">
-              <div *ngFor="let conv of conversoes; trackBy: trackByConversao" class="flex items-center justify-between p-4 rounded-2xl bg-white/[0.02] border border-white/[0.05] hover:bg-white/[0.04] transition-all group">
-                <div class="flex items-center gap-4 min-w-0">
-                  <div class="h-10 w-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">
-                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>
+          </div>
+
+          <!-- History Sidebar -->
+          <div class="lg:col-span-5">
+            <div class="rounded-[40px] bg-white/[0.02] border border-white/[0.1] p-10 backdrop-blur-2xl shadow-2xl h-full min-h-[600px]">
+              <div class="flex items-center justify-between mb-10">
+                <h2 class="text-2xl font-black text-white tracking-tight">Histórico</h2>
+                <div class="flex items-center gap-3">
+                   <button (click)="changePage(-1)" [disabled]="currentPage <= 1" class="h-10 w-10 flex items-center justify-center rounded-xl bg-white/5 text-slate-500 hover:text-white disabled:opacity-20 transition-all"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"/></svg></button>
+                   <span class="text-[10px] font-black text-slate-500 uppercase tracking-widest">{{ currentPage }} / {{ totalPages }}</span>
+                   <button (click)="changePage(1)" [disabled]="currentPage >= totalPages" class="h-10 w-10 flex items-center justify-center rounded-xl bg-white/5 text-slate-500 hover:text-white disabled:opacity-20 transition-all"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"/></svg></button>
+                </div>
+              </div>
+              
+              <div class="space-y-4">
+                <div *ngFor="let conv of conversoes; trackBy: trackByConversao" class="flex items-center justify-between p-5 rounded-[24px] bg-white/[0.03] border border-white/[0.05] hover:bg-white/[0.06] transition-all group">
+                  <div class="flex items-center gap-4 min-w-0">
+                    <div class="h-12 w-12 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white transition-all">
+                      <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2z"/></svg>
+                    </div>
+                    <div class="min-w-0">
+                      <p class="text-sm font-black text-slate-200 truncate pr-4">{{ conv.nome_arquivo }}</p>
+                      <p class="text-[9px] font-black text-slate-500 uppercase mt-1 tracking-widest">{{ conv.criado_em | date:'dd MMM, HH:mm' }}</p>
+                    </div>
                   </div>
-                  <div class="min-w-0">
-                    <p class="text-sm font-semibold text-slate-200 truncate pr-4">{{ conv.nome_arquivo }}</p>
-                    <p class="text-[10px] font-bold text-slate-500 uppercase mt-1">{{ conv.criado_em | date:'dd MMM, HH:mm' }}</p>
-                  </div>
+                </div>
+                <div *ngIf="conversoes.length === 0" class="py-20 text-center text-slate-700">
+                  <p class="text-xs font-black uppercase tracking-widest">Nenhum registro</p>
                 </div>
               </div>
             </div>
@@ -181,33 +193,45 @@
       </div>
 
       <!-- PROFILE VIEW -->
-      <div *ngIf="currentView === 'profile' && user" class="animate-in fade-in slide-in-from-right-8 duration-700 w-full">
-        <div class="rounded-3xl bg-white/[0.02] border border-white/[0.08] p-8 md:p-10 backdrop-blur-xl">
-          <div class="flex items-center gap-4 mb-10">
-            <button (click)="setView('converter')" class="h-10 w-10 flex items-center justify-center rounded-xl bg-white/[0.03] text-slate-400 hover:text-white transition-all"><svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg></button>
-            <h2 class="text-3xl font-bold text-white">Ajustes de Conta</h2>
+      <div *ngIf="currentView === 'profile' && user" class="mx-auto w-full max-w-[500px] animate-in slide-in-from-right-12 duration-700">
+        <div class="rounded-[40px] bg-white/[0.02] border border-white/[0.1] p-10 md:p-12 backdrop-blur-2xl shadow-2xl">
+          <div class="flex items-center gap-6 mb-12">
+            <button (click)="setView('converter')" class="h-12 w-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 text-slate-400 hover:text-white transition-all">
+              <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M10 19l-7-7m0 0l7-7m-7 7h18"/></svg>
+            </button>
+            <h2 class="text-3xl font-black text-white tracking-tight leading-none">Meus Ajustes</h2>
           </div>
           
-          <div class="space-y-10">
+          <div class="space-y-12">
             <section>
-              <h3 class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-6">Seu Perfil</h3>
-              <div class="flex gap-4">
-                <input type="text" [(ngModel)]="name" class="flex-1 rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" />
-                <button (click)="updateProfile()" class="rounded-xl bg-indigo-600 px-8 py-3 text-sm font-bold text-white hover:bg-indigo-500 transition-all">Salvar Nome</button>
+              <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 mb-6 ml-1">Perfil</h3>
+              <div class="space-y-4">
+                <input type="text" [(ngModel)]="name" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" placeholder="Seu nome" />
+                <button (click)="updateProfile()" [disabled]="isSavingProfile" class="w-full rounded-2xl bg-indigo-600 py-4 text-xs font-black uppercase tracking-widest text-white hover:bg-indigo-500 disabled:opacity-50 transition-all shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3">
+                  <svg *ngIf="isSavingProfile" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  {{ isSavingProfile ? 'Salvando...' : 'Salvar Nome' }}
+                </button>
               </div>
             </section>
 
-            <section>
-              <h3 class="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-6">Segurança</h3>
-              <div class="space-y-4 max-w-md">
-                <input type="password" [(ngModel)]="currentPassword" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" placeholder="Senha Atual" />
-                <input type="password" [(ngModel)]="newPassword" class="block w-full rounded-xl bg-white/[0.03] border border-white/[0.1] px-4 py-3 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" placeholder="Nova Senha" />
-                <button (click)="updatePassword()" class="w-full rounded-xl bg-white/[0.05] border border-white/[0.1] py-3 text-sm font-bold text-white hover:bg-white/[0.1] transition-all">Trocar Senha</button>
+            <section *ngIf="user.app_metadata?.['provider'] === 'email'">
+              <h3 class="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 mb-6 ml-1">Segurança</h3>
+              <div class="space-y-4">
+                <input type="password" [(ngModel)]="currentPassword" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" placeholder="Senha Atual" />
+                <input type="password" [(ngModel)]="newPassword" class="block w-full rounded-2xl bg-white/[0.03] border border-white/[0.1] px-5 py-4 text-sm text-white focus:outline-none focus:border-indigo-500/50 transition-all" placeholder="Nova Senha" />
+                <button (click)="updatePassword()" [disabled]="isUpdatingPassword" class="w-full rounded-2xl bg-white/5 border border-white/10 py-4 text-xs font-black uppercase tracking-widest text-white hover:bg-white/10 disabled:opacity-50 transition-all flex items-center justify-center gap-3">
+                  <svg *ngIf="isUpdatingPassword" class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  {{ isUpdatingPassword ? 'Atualizando...' : 'Alterar Senha' }}
+                </button>
               </div>
             </section>
+
+            <div *ngIf="user.app_metadata?.['provider'] !== 'email'" class="p-6 rounded-3xl bg-indigo-500/5 border border-indigo-500/10 text-center">
+              <p class="text-xs font-bold text-indigo-400 tracking-tight">Login via Google. A senha é gerenciada pelo Google.</p>
+            </div>
             
-            <div *ngIf="errorMessage" class="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-center text-xs font-semibold text-red-400">{{ errorMessage }}</div>
-            <div *ngIf="successMessage" class="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center text-xs font-semibold text-emerald-400">{{ successMessage }}</div>
+            <div *ngIf="errorMessage" class="p-5 rounded-2xl bg-red-500/10 border border-red-500/20 text-center text-xs font-black text-red-400">{{ errorMessage }}</div>
+            <div *ngIf="successMessage" class="p-5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center text-xs font-black text-emerald-400">{{ successMessage }}</div>
           </div>
         </div>
       </div>
@@ -216,13 +240,13 @@
   </main>
 
   <!-- Footer -->
-  <footer class="border-t border-white/[0.05] py-12 px-6 bg-[#020617]/50">
-    <div class="mx-auto max-w-6xl flex flex-col items-center justify-between gap-8 md:flex-row">
-      <div class="text-center md:text-left">
-        <span class="text-xl font-bold text-white italic">CloudAudio.</span>
-        <p class="text-[11px] text-slate-500 mt-2 font-medium">© 2026 Engenharia de Áudio Profissional</p>
+  <footer class="border-t border-white/[0.05] py-16 px-6 bg-[#020617]/80 backdrop-blur-xl">
+    <div class="mx-auto max-w-7xl flex flex-col items-center justify-between gap-12 md:flex-row text-center md:text-left">
+      <div>
+        <span class="text-xl font-black text-white italic tracking-tighter">CloudAudio.</span>
+        <p class="text-[10px] text-slate-500 mt-2 font-bold uppercase tracking-widest">© 2026 Engenharia Profissional</p>
       </div>
-      <div class="flex gap-8 text-[11px] font-bold text-slate-600 uppercase tracking-widest">
+      <div class="flex gap-10 text-[10px] font-black text-slate-600 uppercase tracking-widest">
         <span>Angular</span>
         <span>Supabase</span>
         <span>FFmpeg</span>
