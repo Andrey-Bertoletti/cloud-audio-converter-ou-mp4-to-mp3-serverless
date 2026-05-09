@@ -44,6 +44,7 @@ export class AppComponent implements OnInit {
   isUpdatingPassword = false;
   isAuthActionLoading = false;
   progress = 0;
+  toasts: { message: string, type: 'success' | 'error', id: number }[] = [];
 
   // View state
   currentView: 'converter' | 'profile' | 'reset-password' = 'converter';
@@ -100,15 +101,20 @@ export class AppComponent implements OnInit {
   }
 
   async signIn(): Promise<void> {
-    this.errorMessage = '';
-    this.isAuthActionLoading = true;
-    const { error } = await supabase.auth.signInWithPassword({
-      email: this.email,
-      password: this.password
-    });
-    if (error) this.errorMessage = error.message;
-    this.isAuthActionLoading = false;
-    this.cdr.markForCheck();
+    try {
+      this.isAuthActionLoading = true;
+      this.cdr.markForCheck();
+      const { error } = await supabase.auth.signInWithPassword({
+        email: this.email,
+        password: this.password
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      this.showToast(error.message, 'error');
+    } finally {
+      this.isAuthActionLoading = false;
+      this.cdr.markForCheck();
+    }
   }
 
   async signInWithGoogle(): Promise<void> {
@@ -158,20 +164,22 @@ export class AppComponent implements OnInit {
       return;
     }
 
-    this.isSavingProfile = true;
-    this.cdr.markForCheck();
+    try {
+      this.isSavingProfile = true;
+      this.cdr.markForCheck();
 
-    const { error } = await supabase.auth.updateUser({
-      data: { display_name: this.name }
-    });
+      const { error } = await supabase.auth.updateUser({
+        data: { display_name: this.name }
+      });
 
-    this.isSavingProfile = false;
-    if (error) {
-      this.errorMessage = 'Erro ao atualizar: ' + error.message;
-    } else {
-      this.successMessage = 'Perfil atualizado com sucesso!';
+      if (error) throw error;
+      this.showToast('Perfil atualizado com sucesso!', 'success');
+    } catch (error: any) {
+      this.showToast(error.message || 'Erro ao atualizar perfil', 'error');
+    } finally {
+      this.isSavingProfile = false;
+      this.cdr.markForCheck();
     }
-    this.cdr.markForCheck();
   }
 
   async signOut(): Promise<void> {
@@ -206,23 +214,64 @@ export class AppComponent implements OnInit {
       }
     }
 
-    this.isUpdatingPassword = true;
-    this.cdr.markForCheck();
+    try {
+      this.isUpdatingPassword = true;
+      this.cdr.markForCheck();
 
-    const { error } = await supabase.auth.updateUser({ password: this.newPassword });
-    
-    this.isUpdatingPassword = false;
-    if (error) {
-      this.errorMessage = error.message;
-    } else {
-      this.successMessage = 'Senha atualizada com sucesso!';
+      const userEmail = this.user?.email || '';
+      const changeDate = new Intl.DateTimeFormat('pt-BR', {
+        dateStyle: 'long',
+        timeStyle: 'short'
+      }).format(new Date());
+
+      // Atualiza a senha de fato
+      const { error } = await supabase.auth.updateUser({ password: this.newPassword });
+      
+      if (error) throw error;
+
+      // Chama o backend para enviar o e-mail de confirmação (DADOS DINÂMICOS)
+      this.enviarEmailConfirmacao(userEmail, changeDate);
+
+      this.showToast('Senha alterada com sucesso! Um e-mail de confirmação foi enviado.', 'success');
       this.newPassword = '';
       this.currentPassword = '';
       if (this.currentView === 'reset-password') {
         this.currentView = 'converter';
       }
+    } catch (error: any) {
+      this.showToast(error.message, 'error');
+    } finally {
+      this.isUpdatingPassword = false;
+      this.cdr.markForCheck();
     }
+  }
+
+  private async enviarEmailConfirmacao(email: string, data: string): Promise<void> {
+    try {
+      // Aqui chamaremos sua Edge Function ou API Node.js
+      await fetch(`${environment.apiBaseUrl}/api/notify-security`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, data, type: 'password_change' })
+      });
+    } catch (e) {
+      console.error('Erro ao enviar e-mail de segurança:', e);
+    }
+  }
+
+  showToast(message: string, type: 'success' | 'error' = 'success'): void {
+    const id = Date.now();
+    this.toasts.push({ message, type, id });
     this.cdr.markForCheck();
+
+    setTimeout(() => {
+      this.toasts = this.toasts.filter(t => t.id !== id);
+      this.cdr.markForCheck();
+    }, 4000);
+  }
+
+  trackByToast(index: number, toast: any): number {
+    return toast.id;
   }
 
   async forgotPassword(): Promise<void> {
@@ -271,14 +320,23 @@ export class AppComponent implements OnInit {
   async converterArquivo(): Promise<void> {
     if (!this.selectedFile || this.isConverting) return;
 
-    this.isConverting = true;
-    this.errorMessage = '';
-    this.successMessage = '';
-    this.progress = 0;
-    this.outputUrl = null;
-
+    let watchdog: any;
     try {
+      this.isConverting = true;
+      this.progress = 0;
+      this.cdr.markForCheck();
+
+      // Watchdog: Se em 30 segundos não terminar, libera o botão
+      watchdog = setTimeout(() => {
+        if (this.isConverting) {
+          this.isConverting = false;
+          this.showToast('Conversão demorou demais. Tente novamente.', 'error');
+          this.cdr.markForCheck();
+        }
+      }, 45000);
+
       await this.inicializarFfmpeg();
+      
       this.ffmpeg.on('progress', ({ progress }) => {
         this.progress = Math.round(progress * 100);
         this.cdr.markForCheck();
@@ -288,22 +346,31 @@ export class AppComponent implements OnInit {
       const baseName = inputName.replace(/\.mp4$/i, '');
       const outputName = `${baseName}.mp3`;
 
-      await this.ffmpeg.writeFile(inputName, await fetchFile(this.selectedFile));
-      await this.ffmpeg.exec(['-i', inputName, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '192k', outputName]);
+      const fileData = await fetchFile(this.selectedFile);
+      await this.ffmpeg.writeFile(inputName, fileData);
+      
+      // Comando otimizado para velocidade
+      await this.ffmpeg.exec(['-i', inputName, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '128k', outputName]);
 
       const mp3Data = await this.ffmpeg.readFile(outputName);
       const mp3Blob = new Blob([mp3Data as Uint8Array], { type: 'audio/mpeg' });
+      
       this.outputUrl = URL.createObjectURL(mp3Blob);
       this.outputName = outputName;
       this.progress = 100;
 
-      const storagePath = await this.uploadParaStorage(outputName, mp3Blob);
-      await this.salvarLogConversao(outputName, storagePath);
-      await this.carregarConversoes();
-      this.successMessage = 'Concluído!';
-    } catch (error) {
-      this.errorMessage = error instanceof Error ? error.message : 'Falha na conversão.';
+      // Salva no histórico em background
+      this.uploadParaStorage(outputName, mp3Blob)
+        .then(path => this.salvarLogConversao(outputName, path))
+        .then(() => this.carregarConversoes());
+
+      this.showToast('Conversão concluída com sucesso!', 'success');
+    } catch (error: any) {
+      console.error('FFmpeg Error:', error);
+      this.showToast('Falha na conversão: ' + (error.message || 'Erro interno'), 'error');
+      this.ffmpegLoaded = false; // Força recarregamento na próxima
     } finally {
+      clearTimeout(watchdog);
       this.isConverting = false;
       this.cdr.markForCheck();
     }
@@ -311,13 +378,12 @@ export class AppComponent implements OnInit {
 
   async converterYouTube(): Promise<void> {
     if (!this.youtubeUrl || this.isYtConverting) return;
-    this.isYtConverting = true;
-    this.ytStatus = 'Iniciando...';
-    this.errorMessage = '';
-    this.successMessage = '';
-    this.cdr.markForCheck();
-
+    
     try {
+      this.isYtConverting = true;
+      this.ytStatus = 'Extraindo áudio na nuvem...';
+      this.cdr.markForCheck();
+
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(`${environment.apiBaseUrl}/api/youtube/convert`, {
         method: 'POST',
@@ -329,14 +395,14 @@ export class AppComponent implements OnInit {
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error);
+      if (!response.ok) throw new Error(result.error || 'Erro no servidor');
 
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
-      this.successMessage = 'Sucesso!';
-      await this.carregarConversoes();
-    } catch (error) {
-      this.errorMessage = error instanceof Error ? error.message : 'Erro YouTube.';
+      this.showToast('Vídeo do YouTube convertido!', 'success');
+      this.carregarConversoes();
+    } catch (error: any) {
+      this.showToast(error.message || 'Erro ao converter YouTube', 'error');
     } finally {
       this.isYtConverting = false;
       this.ytStatus = '';
