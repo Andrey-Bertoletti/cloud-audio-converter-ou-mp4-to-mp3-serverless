@@ -170,11 +170,23 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-    // 1. Obter informações do vídeo
-    const info = await ytdl.getInfo(youtubeUrl);
-    const videoTitle = info.videoDetails.title.replace(/[^\w\s]/gi, '').substring(0, 50);
-    const fileName = `${videoTitle}.mp3`;
+    // 1. Obter informações do vídeo com cookies
+    const options = { 
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
+      }
+    };
+
+    if (process.env.YOUTUBE_COOKIE) {
+      options.requestOptions.headers.cookie = process.env.YOUTUBE_COOKIE;
+    }
+
+    const info = await ytdl.getInfo(youtubeUrl, options);
+    const fileName = `${info.videoDetails.title.replace(/[^\w\s]/gi, '')}.mp3`;
     const timestamp = Date.now();
+    console.log(`[YouTube] Título: ${info.videoDetails.title}`);
     const storagePath = `${user_id}/yt-${timestamp}-${fileName}`;
 
     // 2. Criar caminho temporário para o arquivo convertido
