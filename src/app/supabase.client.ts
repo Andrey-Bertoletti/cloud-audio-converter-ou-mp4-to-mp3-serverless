@@ -9,12 +9,10 @@ export const supabase = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      // Desativar o LockManager para evitar erros de permissão no navegador
-      storageKey: 'sb-auth-token',
-      lock: {
-        acquire: async () => ({ error: null }),
-        release: async () => {}
-      } as any
+      // Função de Lock simplificada para evitar bloqueios de navegador
+      lock: async (name: string, acquireTimeout: number, fn: () => Promise<any>) => {
+        return await fn();
+      }
     }
   }
 );

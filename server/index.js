@@ -19,6 +19,9 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 const app = express();
 const port = Number(process.env.PORT || 3000);
 
+// Confia no proxy do Render (corrige ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
+app.set('trust proxy', 1);
+
 // Função de Limpeza Automática (24 horas)
 async function performCleanup() {
   console.log('[Cleanup] Iniciando limpeza de arquivos com mais de 24 horas...');
