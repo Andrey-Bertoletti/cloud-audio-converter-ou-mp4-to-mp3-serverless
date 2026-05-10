@@ -193,9 +193,10 @@ app.post('/api/youtube/convert', async (req, res) => {
       };
 
       // Se houver um cookie configurado, cria um agente para evitar erro 429
+      console.log('[YouTube] Verificando cookie...', process.env.YOUTUBE_COOKIE ? 'Presente' : 'AUSENTE');
+      
       if (process.env.YOUTUBE_COOKIE) {
         try {
-          // Versões recentes do distube/ytdl-core usam cookies nos headers ou via agente
           options.requestOptions.headers.cookie = process.env.YOUTUBE_COOKIE;
           console.log('[YouTube] Usando cookies para autenticação.');
         } catch (e) {
