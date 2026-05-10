@@ -253,9 +253,11 @@ app.post('/api/youtube/convert', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('[YouTube] Falha catastrófica:', error.message);
+    console.error('[YouTube] Erro Interno:', error);
     return res.status(500).json({ 
-      error: error.message || 'Erro ao processar vídeo do YouTube.' 
+      error: 'Erro no servidor durante a conversão',
+      details: error.message,
+      code: error.code
     });
   } finally {
     // Limpar arquivo temporário
