@@ -170,7 +170,7 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-    // 1. Configurar Agente com cookies e camuflagem de Android
+    // 1. Configurar Agente camuflado como YouTube TV
     let agent;
     if (process.env.YOUTUBE_COOKIE) {
       try {
@@ -185,8 +185,9 @@ app.post('/api/youtube/convert', async (req, res) => {
       agent,
       requestOptions: {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+          'X-Youtube-Client-Name': '5', // 5 é o ID para TV
+          'X-Youtube-Client-Version': '2.20230922.00.00'
         }
       }
     };
@@ -208,8 +209,9 @@ app.post('/api/youtube/convert', async (req, res) => {
         agent: agent,
         requestOptions: {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'X-Youtube-Client-Name': '5',
+            'X-Youtube-Client-Version': '2.20230922.00.00'
           }
         }
       };
