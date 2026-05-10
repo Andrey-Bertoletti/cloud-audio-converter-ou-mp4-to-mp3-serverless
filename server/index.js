@@ -170,19 +170,19 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-    // 1. Obter informações do vídeo com cookies
-    const options = { 
-      requestOptions: {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-      }
-    };
-
+    // 1. Configurar Agente do YouTube com cookies (Novo Formato JSON)
+    let agent;
     if (process.env.YOUTUBE_COOKIE) {
-      options.requestOptions.headers.cookie = process.env.YOUTUBE_COOKIE;
+      try {
+        const cookies = JSON.parse(process.env.YOUTUBE_COOKIE);
+        agent = ytdl.createAgent(cookies);
+        console.log('[YouTube] Agente criado com sucesso usando cookies JSON.');
+      } catch (e) {
+        console.error('[YouTube] Falha ao ler cookies JSON. Tente usar o formato da extensão EditThisCookie:', e.message);
+      }
     }
 
+    const options = { agent };
     const info = await ytdl.getInfo(youtubeUrl, options);
     const fileName = `${info.videoDetails.title.replace(/[^\w\s]/gi, '')}.mp3`;
     const timestamp = Date.now();
@@ -194,29 +194,13 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     // 3. Baixar e converter usando stream
     await new Promise((resolve, reject) => {
-      const options = { 
+      const streamOptions = { 
         quality: 'highestaudio', 
         filter: 'audioonly',
-        requestOptions: {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          }
-        }
+        agent: agent // Reutiliza o agente criado acima
       };
 
-      // Se houver um cookie configurado, cria um agente para evitar erro 429
-      console.log('[YouTube] Verificando cookie...', process.env.YOUTUBE_COOKIE ? 'Presente' : 'AUSENTE');
-      
-      if (process.env.YOUTUBE_COOKIE) {
-        try {
-          options.requestOptions.headers.cookie = process.env.YOUTUBE_COOKIE;
-          console.log('[YouTube] Usando cookies para autenticação.');
-        } catch (e) {
-          console.error('[YouTube] Erro ao configurar agente de cookies:', e.message);
-        }
-      }
-
-      const stream = ytdl(youtubeUrl, options);
+      const stream = ytdl(youtubeUrl, streamOptions);
 
       ffmpeg(stream)
         .toFormat('mp3')
