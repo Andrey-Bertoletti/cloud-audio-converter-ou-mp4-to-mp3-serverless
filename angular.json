@@ -28,7 +28,10 @@
             "browser": "src/main.ts",
             "polyfills": ["zone.js"],
             "tsConfig": "tsconfig.app.json",
-            "assets": ["src/assets"],
+            "assets": [
+              "src/assets",
+              "src/worker.js"
+            ],
             "styles": ["src/styles.css"],
             "scripts": []
           },

@@ -179,7 +179,7 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     // 3. Baixar e converter usando stream
     await new Promise((resolve, reject) => {
-      const stream = ytdl(youtubeUrl, { 
+      const options = { 
         quality: 'highestaudio', 
         filter: 'audioonly',
         requestOptions: {
@@ -187,7 +187,20 @@ app.post('/api/youtube/convert', async (req, res) => {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           }
         }
-      });
+      };
+
+      // Se houver um cookie configurado, cria um agente para evitar erro 429
+      if (process.env.YOUTUBE_COOKIE) {
+        try {
+          // Versões recentes do distube/ytdl-core usam cookies nos headers ou via agente
+          options.requestOptions.headers.cookie = process.env.YOUTUBE_COOKIE;
+          console.log('[YouTube] Usando cookies para autenticação.');
+        } catch (e) {
+          console.error('[YouTube] Erro ao configurar agente de cookies:', e.message);
+        }
+      }
+
+      const stream = ytdl(youtubeUrl, options);
 
       ffmpeg(stream)
         .toFormat('mp3')
