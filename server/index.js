@@ -170,19 +170,27 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-    // 1. Configurar Agente do YouTube com cookies (Novo Formato JSON)
+    // 1. Configurar Agente com cookies e camuflagem de Android
     let agent;
     if (process.env.YOUTUBE_COOKIE) {
       try {
         const cookies = JSON.parse(process.env.YOUTUBE_COOKIE);
         agent = ytdl.createAgent(cookies);
-        console.log('[YouTube] Agente criado com sucesso usando cookies JSON.');
       } catch (e) {
-        console.error('[YouTube] Falha ao ler cookies JSON. Tente usar o formato da extensão EditThisCookie:', e.message);
+        console.error('[YouTube] Erro nos cookies:', e.message);
       }
     }
 
-    const options = { agent };
+    const options = { 
+      agent,
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+        }
+      }
+    };
+
     const info = await ytdl.getInfo(youtubeUrl, options);
     const fileName = `${info.videoDetails.title.replace(/[^\w\s]/gi, '')}.mp3`;
     const timestamp = Date.now();
@@ -197,7 +205,13 @@ app.post('/api/youtube/convert', async (req, res) => {
       const streamOptions = { 
         quality: 'highestaudio', 
         filter: 'audioonly',
-        agent: agent // Reutiliza o agente criado acima
+        agent: agent,
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+          }
+        }
       };
 
       const stream = ytdl(youtubeUrl, streamOptions);
