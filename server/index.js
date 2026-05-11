@@ -115,6 +115,8 @@ function buildYtdlOptions(agent, profile) {
   if (profile === 'tv') {
     return {
       agent,
+      // Reduz volume de requisições internas (um client por vez)
+      playerClients: ['TV'],
       requestOptions: {
         headers: YT_HEADERS_TV
       }
@@ -123,6 +125,8 @@ function buildYtdlOptions(agent, profile) {
 
   return {
     agent,
+    // Geralmente é o client com menos restrições
+    playerClients: ['WEB_EMBEDDED'],
     requestOptions: {
       headers: YT_HEADERS_WEB
     }
@@ -252,8 +256,10 @@ async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
     throw err;
   }
 
-  const profiles = ['tv', 'web'];
+  // Prefere WEB_EMBEDDED por padrão; tenta TV como fallback
+  const profiles = ['web', 'tv'];
   let lastError;
+  let lastBotChallengeError;
 
   for (const profile of profiles) {
     for (let attempt = 1; attempt <= YT_METADATA_MAX_RETRIES; attempt += 1) {
@@ -267,10 +273,10 @@ async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
         const botChallenge = isBotChallengeError(err);
         const rateLimited = isRateLimitError(err);
 
-        // Em "confirm you're not a bot", retries rápidos só pioram o bloqueio
+        // Em "confirm you're not a bot", não adianta retry rápido; tenta próximo perfil
         if (botChallenge) {
-          ytBotChallengeBlockedUntilMs = Date.now() + YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS * 1000;
-          throw err;
+          lastBotChallengeError = err;
+          break;
         }
 
         if (!rateLimited) {
@@ -285,6 +291,13 @@ async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
         }
       }
     }
+  }
+
+  if (lastBotChallengeError) {
+    ytBotChallengeBlockedUntilMs = Date.now() + YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS * 1000;
+    lastBotChallengeError.code = 'YT_BOT_CHALLENGE';
+    lastBotChallengeError.retryAfterSeconds = YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS;
+    throw lastBotChallengeError;
   }
 
   throw lastError;
@@ -554,7 +567,7 @@ app.post('/api/youtube/convert', async (req, res) => {
       res.setHeader('Retry-After', String(YT_RETRY_AFTER_SECONDS));
       return res.status(429).json({
         error: 'YouTube temporariamente limitou a conversão. Tente novamente em alguns minutos.',
-        code: 429,
+        code: 'YT_RATE_LIMIT',
         retryAfterSeconds: YT_RETRY_AFTER_SECONDS
       });
     }

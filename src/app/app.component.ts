@@ -435,10 +435,16 @@ export class AppComponent implements OnInit {
       const retryAfterSeconds = Number(result?.retryAfterSeconds);
       if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
         const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+        const reason = String(result?.code || '');
+        if (reason === 'YT_BOT_CHALLENGE') {
+          return `YouTube solicitou verificação anti-bot para este servidor. Tente novamente em cerca de ${minutes} minuto(s).`;
+        }
+
         return `YouTube limitou temporariamente a conversão. Tente novamente em cerca de ${minutes} minuto(s).`;
       }
 
-      return 'YouTube limitou temporariamente a conversão. Tente novamente em alguns minutos.';
+      const apiMessage = typeof result?.error === 'string' ? result.error : '';
+      return apiMessage || 'YouTube limitou temporariamente a conversão. Tente novamente em alguns minutos.';
     }
 
     if (status === 502) {
