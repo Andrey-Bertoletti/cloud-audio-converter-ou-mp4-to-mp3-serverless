@@ -24,6 +24,10 @@ const YT_HEADERS_WEB = {
   'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
 };
 
+const YT_METADATA_MAX_RETRIES = 3;
+const YT_METADATA_BACKOFF_MS = 1200;
+const YT_RETRY_AFTER_SECONDS = 120;
+
 function safeFileName(input) {
   const baseName = String(input || '')
     .normalize('NFKD')
@@ -94,20 +98,33 @@ function buildYtdlOptions(agent, profile) {
   };
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
   const profiles = ['tv', 'web'];
   let lastError;
 
   for (const profile of profiles) {
-    try {
-      console.log(`[YouTube] Tentando metadata com perfil: ${profile}`);
-      return await ytdl.getInfo(youtubeUrl, buildYtdlOptions(agent, profile));
-    } catch (err) {
-      lastError = err;
-      console.error(`[YouTube] Falha no perfil ${profile}:`, err?.message || err);
+    for (let attempt = 1; attempt <= YT_METADATA_MAX_RETRIES; attempt += 1) {
+      try {
+        console.log(`[YouTube] Tentando metadata com perfil: ${profile} (tentativa ${attempt}/${YT_METADATA_MAX_RETRIES})`);
+        return await ytdl.getInfo(youtubeUrl, buildYtdlOptions(agent, profile));
+      } catch (err) {
+        lastError = err;
+        console.error(`[YouTube] Falha no perfil ${profile} (tentativa ${attempt}):`, err?.message || err);
 
-      if (!isRateLimitError(err)) {
-        throw err;
+        if (!isRateLimitError(err)) {
+          throw err;
+        }
+
+        if (attempt < YT_METADATA_MAX_RETRIES) {
+          const jitter = Math.floor(Math.random() * 350);
+          const backoff = YT_METADATA_BACKOFF_MS * attempt + jitter;
+          console.log(`[YouTube] 429 recebido. Aguardando ${backoff}ms para nova tentativa...`);
+          await wait(backoff);
+        }
       }
     }
   }
@@ -358,9 +375,11 @@ app.post('/api/youtube/convert', async (req, res) => {
     console.error('[YouTube] Erro Interno:', error);
 
     if (upstreamStatus === 429) {
+      res.setHeader('Retry-After', String(YT_RETRY_AFTER_SECONDS));
       return res.status(429).json({
         error: 'YouTube temporariamente limitou a conversão. Tente novamente em alguns minutos.',
-        code: 429
+        code: 429,
+        retryAfterSeconds: YT_RETRY_AFTER_SECONDS
       });
     }
 
