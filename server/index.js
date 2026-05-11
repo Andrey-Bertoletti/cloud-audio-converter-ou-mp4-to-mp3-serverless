@@ -27,6 +27,7 @@ const YT_HEADERS_WEB = {
 const YT_METADATA_MAX_RETRIES = 3;
 const YT_METADATA_BACKOFF_MS = 1200;
 const YT_RETRY_AFTER_SECONDS = 120;
+const YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS = 300;
 
 function safeFileName(input) {
   const baseName = String(input || '')
@@ -41,6 +42,23 @@ function safeFileName(input) {
 
 function isRateLimitError(err) {
   return extractHttpStatusFromError(err) === 429;
+}
+
+function isBotChallengeError(err) {
+  const text = [
+    String(err?.message || ''),
+    String(err?.stack || ''),
+    String(err?.cause?.message || ''),
+    String(err?.cause?.stack || '')
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  return (
+    text.includes('sign in to confirm you\'re not a bot') ||
+    text.includes('confirm you are not a bot') ||
+    text.includes('unrecoverableerror')
+  );
 }
 
 function extractHttpStatusFromError(err) {
@@ -115,14 +133,16 @@ async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
         lastError = err;
         console.error(`[YouTube] Falha no perfil ${profile} (tentativa ${attempt}):`, err?.message || err);
 
-        if (!isRateLimitError(err)) {
+        const retryable = isRateLimitError(err) || isBotChallengeError(err);
+        if (!retryable) {
           throw err;
         }
 
         if (attempt < YT_METADATA_MAX_RETRIES) {
           const jitter = Math.floor(Math.random() * 350);
           const backoff = YT_METADATA_BACKOFF_MS * attempt + jitter;
-          console.log(`[YouTube] 429 recebido. Aguardando ${backoff}ms para nova tentativa...`);
+          const reason = isBotChallengeError(err) ? 'desafio anti-bot' : '429';
+          console.log(`[YouTube] ${reason} recebido. Aguardando ${backoff}ms para nova tentativa...`);
           await wait(backoff);
         }
       }
@@ -373,6 +393,15 @@ app.post('/api/youtube/convert', async (req, res) => {
   } catch (error) {
     const upstreamStatus = extractHttpStatusFromError(error);
     console.error('[YouTube] Erro Interno:', error);
+
+    if (isBotChallengeError(error)) {
+      res.setHeader('Retry-After', String(YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS));
+      return res.status(429).json({
+        error: 'YouTube solicitou verificação anti-bot para este servidor. Tente novamente em alguns minutos.',
+        code: 'YT_BOT_CHALLENGE',
+        retryAfterSeconds: YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
+      });
+    }
 
     if (upstreamStatus === 429) {
       res.setHeader('Retry-After', String(YT_RETRY_AFTER_SECONDS));
