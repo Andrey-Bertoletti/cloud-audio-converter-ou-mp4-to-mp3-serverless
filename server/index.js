@@ -1,324 +1,18 @@
 process.env.YTDL_NO_UPDATE = process.env.YTDL_NO_UPDATE || '1';
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+
 const cron = require('node-cron');
+const { createApp } = require('./app');
 const { supabaseAdmin } = require('./config/supabaseAdmin');
-const authMiddleware = require('./middleware/auth');
-const ytdl = require('@distube/ytdl-core');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('ffmpeg-static');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
+const { safeLog } = require('./utils/safeLog');
 
-const YT_HEADERS_TV = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'X-Youtube-Client-Name': '5',
-  'X-Youtube-Client-Version': '2.20230922.00.00'
-};
+const app = createApp();
 
-const YT_HEADERS_WEB = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
-};
-
-const YT_METADATA_MAX_RETRIES = 3;
-const YT_METADATA_BACKOFF_MS = 1200;
-const YT_RETRY_AFTER_SECONDS = 120;
-const YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS = 300;
-let ytBotChallengeBlockedUntilMs = 0;
-
-function remainingSeconds(untilMs) {
-  if (!untilMs) return 0;
-  return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
-}
-
-function safeFileName(input) {
-  const baseName = String(input || '')
-    .normalize('NFKD')
-    .replace(/[^a-zA-Z0-9\s-]/g, '')
-    .trim()
-    .replace(/\s+/g, '-');
-
-  const clipped = baseName.slice(0, 80);
-  return clipped || `audio-${Date.now()}`;
-}
-
-function isRateLimitError(err) {
-  return extractHttpStatusFromError(err) === 429;
-}
-
-function isBotChallengeError(err) {
-  const text = [
-    String(err?.name || ''),
-    String(err?.message || ''),
-    String(err?.stack || ''),
-    String(err?.cause?.name || ''),
-    String(err?.cause?.message || ''),
-    String(err?.cause?.stack || '')
-  ]
-    .join(' ')
-    .toLowerCase();
-
-  const normalized = text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
-
-  // Evita falso-positivo em erros genéricos que contenham "bot" no stack
-  return (
-    (normalized.includes('sign in to confirm') && normalized.includes('not a bot')) ||
-    normalized.includes("confirm you're not a bot") ||
-    normalized.includes('confirm you are not a bot') ||
-    (normalized.includes('faca login para confirmar') && normalized.includes('nao e um bot'))
-  );
-}
-
-function extractHttpStatusFromError(err) {
-  const candidates = [
-    err?.statusCode,
-    err?.code,
-    err?.status,
-    err?.response?.status,
-    err?.cause?.statusCode,
-    err?.cause?.code,
-    err?.cause?.status,
-    err?.cause?.response?.status
-  ];
-
-  for (const value of candidates) {
-    const parsed = Number(value);
-    if (Number.isInteger(parsed) && parsed >= 100 && parsed <= 599) {
-      return parsed;
-    }
-  }
-
-  const text = [
-    String(err?.message || ''),
-    String(err?.stack || ''),
-    String(err?.cause?.message || ''),
-    String(err?.cause?.stack || '')
-  ].join(' ');
-
-  const matched = text.match(/\b([1-5]\d{2})\b/);
-  if (matched) {
-    const parsed = Number(matched[1]);
-    if (parsed >= 100 && parsed <= 599) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function buildYtdlOptions(agent, profile) {
-  if (profile === 'tv') {
-    return {
-      agent,
-      // Reduz volume de requisições internas (um client por vez)
-      playerClients: ['TV'],
-      requestOptions: {
-        headers: YT_HEADERS_TV
-      }
-    };
-  }
-
-  return {
-    agent,
-    // Geralmente é o client com menos restrições
-    playerClients: ['WEB_EMBEDDED'],
-    requestOptions: {
-      headers: YT_HEADERS_WEB
-    }
-  };
-}
-
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseCookieHeaderToArray(cookieHeader) {
-  const raw = String(cookieHeader || '').trim();
-  if (!raw) return [];
-
-  return raw
-    .split(';')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const index = part.indexOf('=');
-      if (index <= 0) return null;
-      const name = part.slice(0, index).trim();
-      const value = part.slice(index + 1).trim();
-      if (!name || !value) return null;
-
-      return {
-        domain: '.youtube.com',
-        hostOnly: false,
-        httpOnly: false,
-        name,
-        path: '/',
-        sameSite: 'lax',
-        secure: true,
-        value
-      };
-    })
-    .filter(Boolean);
-}
-
-function readYouTubeCookiesFromEnv() {
-  const rawJson = process.env.YOUTUBE_COOKIE || process.env.YOUTUBE_COOKIES;
-  if (rawJson) {
-    try {
-      const parsed = JSON.parse(rawJson);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
-      }
-    } catch (error) {
-      const parsedFromHeader = parseCookieHeaderToArray(rawJson);
-      if (parsedFromHeader.length > 0) {
-        return parsedFromHeader;
-      }
-      console.error('[YouTube] YOUTUBE_COOKIE inválido (JSON/cookie header).');
-    }
-  }
-
-  const rawHeader = process.env.YOUTUBE_COOKIE_HEADER;
-  if (rawHeader) {
-    const parsedFromHeader = parseCookieHeaderToArray(rawHeader);
-    if (parsedFromHeader.length > 0) {
-      return parsedFromHeader;
-    }
-  }
-
-  const rawBase64 =
-    process.env.YOUTUBE_COOKIE_BASE64 ||
-    process.env.YOUTUBE_COOKIES_BASE64 ||
-    process.env.YOUTUBE_COOKIE_HEADER_BASE64;
-  if (rawBase64) {
-    try {
-      const decoded = Buffer.from(rawBase64, 'base64').toString('utf-8');
-      try {
-        const parsed = JSON.parse(decoded);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      } catch (_jsonError) {
-        const parsedFromHeader = parseCookieHeaderToArray(decoded);
-        if (parsedFromHeader.length > 0) {
-          return parsedFromHeader;
-        }
-      }
-    } catch (error) {
-      console.error('[YouTube] YOUTUBE_COOKIE_BASE64 inválido (base64/json).');
-    }
-  }
-
-  return [];
-}
-
-function createYouTubeAgent() {
-  const cookies = readYouTubeCookiesFromEnv();
-  const proxyUri = process.env.YOUTUBE_PROXY_URI || process.env.YOUTUBE_PROXY_URL;
-
-  if (proxyUri) {
-    try {
-      const agent = ytdl.createProxyAgent({ uri: proxyUri }, cookies);
-      console.log(`[YouTube] Agente criado com proxy dedicado (${cookies.length} cookies).`);
-      return agent;
-    } catch (error) {
-      console.error('[YouTube] Falha ao criar agente com proxy:', error?.message || error);
-    }
-  }
-
-  if (cookies.length > 0) {
-    try {
-      const agent = ytdl.createAgent(cookies);
-      console.log('[YouTube] Agente criado com sucesso usando cookies.');
-      return agent;
-    } catch (error) {
-      console.error('[YouTube] Erro ao criar agente com cookies:', error?.message || error);
-    }
-  }
-
-  console.log('[YouTube] Sem proxy/cookies válidos. Usando agente padrão.');
-  return undefined;
-}
-
-async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
-  const cooldownSeconds = remainingSeconds(ytBotChallengeBlockedUntilMs);
-  if (cooldownSeconds > 0) {
-    const err = new Error(
-      `YouTube solicitou verificação anti-bot recentemente. Aguarde ${cooldownSeconds}s e tente novamente.`
-    );
-    err.code = 'YT_BOT_CHALLENGE';
-    err.retryAfterSeconds = cooldownSeconds;
-    throw err;
-  }
-
-  // Prefere WEB_EMBEDDED por padrão; tenta TV como fallback
-  const profiles = ['web', 'tv'];
-  let lastError;
-  let lastBotChallengeError;
-
-  for (const profile of profiles) {
-    for (let attempt = 1; attempt <= YT_METADATA_MAX_RETRIES; attempt += 1) {
-      try {
-        console.log(`[YouTube] Tentando metadata com perfil: ${profile} (tentativa ${attempt}/${YT_METADATA_MAX_RETRIES})`);
-        return await ytdl.getInfo(youtubeUrl, buildYtdlOptions(agent, profile));
-      } catch (err) {
-        lastError = err;
-        console.error(`[YouTube] Falha no perfil ${profile} (tentativa ${attempt}):`, err?.message || err);
-
-        const botChallenge = isBotChallengeError(err);
-        const rateLimited = isRateLimitError(err);
-
-        // Em "confirm you're not a bot", não adianta retry rápido; tenta próximo perfil
-        if (botChallenge) {
-          lastBotChallengeError = err;
-          break;
-        }
-
-        if (!rateLimited) {
-          throw err;
-        }
-
-        if (attempt < YT_METADATA_MAX_RETRIES) {
-          const jitter = Math.floor(Math.random() * 350);
-          const backoff = YT_METADATA_BACKOFF_MS * attempt + jitter;
-          console.log(`[YouTube] 429 recebido. Aguardando ${backoff}ms para nova tentativa...`);
-          await wait(backoff);
-        }
-      }
-    }
-  }
-
-  if (lastBotChallengeError) {
-    ytBotChallengeBlockedUntilMs = Date.now() + YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS * 1000;
-    lastBotChallengeError.code = 'YT_BOT_CHALLENGE';
-    lastBotChallengeError.retryAfterSeconds = YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS;
-    throw lastBotChallengeError;
-  }
-
-  throw lastError;
-}
-
-// Configura o caminho do ffmpeg estático
-ffmpeg.setFfmpegPath(ffmpegPath);
-
-const app = express();
-const port = Number(process.env.PORT || 3000);
-
-// Confia no proxy do Render (corrige ERR_ERL_UNEXPECTED_X_FORWARDED_FOR)
-app.set('trust proxy', 1);
-
-// Função de Limpeza Automática (24 horas)
 async function performCleanup() {
-  console.log('[Cleanup] Iniciando limpeza de arquivos com mais de 24 horas...');
+  safeLog('log', '[Cleanup] Iniciando limpeza de arquivos com mais de 24 horas...');
   try {
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    // 1. Buscar registros expirados
     const { data: expired, error: fetchError } = await supabaseAdmin
       .from('conversoes')
       .select('id, storage_path')
@@ -326,282 +20,45 @@ async function performCleanup() {
 
     if (fetchError) throw fetchError;
     if (!expired || expired.length === 0) {
-      console.log('[Cleanup] Nenhum arquivo expirado para remover.');
+      safeLog('log', '[Cleanup] Nenhum arquivo expirado para remover.');
       return;
     }
 
-    console.log(`[Cleanup] Encontrados ${expired.length} registros para remover.`);
+    safeLog('log', `[Cleanup] Encontrados ${expired.length} registros para remover.`);
 
-    // 2. Remover do Storage
     const pathsToRemove = expired
-      .filter(row => row.storage_path)
-      .map(row => row.storage_path);
+      .filter((row) => row.storage_path)
+      .map((row) => row.storage_path);
 
     if (pathsToRemove.length > 0) {
-      const { error: storageError } = await supabaseAdmin.storage
-        .from('converted-audio')
-        .remove(pathsToRemove);
-      
-      if (storageError) console.error('[Cleanup] Erro ao remover do storage:', storageError.message);
-      else console.log(`[Cleanup] ${pathsToRemove.length} arquivos removidos do Storage.`);
+      const { error: storageError } = await supabaseAdmin.storage.from('converted-audio').remove(pathsToRemove);
+      if (storageError) safeLog('error', '[Cleanup] Erro ao remover do storage:', storageError);
+      else safeLog('log', `[Cleanup] ${pathsToRemove.length} arquivos removidos do Storage.`);
     }
 
-    // 3. Remover do Banco de Dados
-    const idsToRemove = expired.map(row => row.id);
-    const { error: dbError } = await supabaseAdmin
-      .from('conversoes')
-      .delete()
-      .in('id', idsToRemove);
+    const idsToRemove = expired.map((row) => row.id);
+    const { error: dbError } = await supabaseAdmin.from('conversoes').delete().in('id', idsToRemove);
 
     if (dbError) throw dbError;
-    console.log('[Cleanup] Registros removidos do banco de dados com sucesso.');
+    safeLog('log', '[Cleanup] Registros removidos do banco de dados com sucesso.');
   } catch (err) {
-    console.error('[Cleanup] Falha na limpeza:', err.message);
+    safeLog('error', '[Cleanup] Falha na limpeza:', err);
   }
 }
 
-// Agenda a limpeza para rodar a cada 1 hora
-cron.schedule('0 * * * *', performCleanup);
+if (process.env.DISABLE_CLEANUP_CRON !== '1') {
+  cron.schedule('0 * * * *', performCleanup);
+}
 
-// Configuração de Segurança Avançada para FFmpeg (COOP/COEP)
-app.use(helmet({
-  crossOriginOpenerPolicy: { policy: "same-origin" },
-  crossOriginEmbedderPolicy: { policy: "require-corp" },
-}));
+if (require.main === module) {
+  const port = Number(process.env.PORT || 3000);
 
-// Rate Limiting: Máximo de 100 requisições por 15 minutos por IP
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: { error: 'Muitas requisições deste IP, tente novamente em 15 minutos.' }
-});
-app.use(limiter);
+  app.listen(port, () => {
+    const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
+    safeLog('log', `[Backend] Rodando em modo: ${mode}`);
+    safeLog('log', `[Backend] API disponível na porta: ${port}`);
+  });
+}
 
-// CORS restrito (em produção deve ser o domínio do frontend)
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:4200',
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+module.exports = { app, performCleanup };
 
-app.use(express.json());
-
-app.get('/health', (_, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Todas as rotas de API agora exigem autenticação via JWT do Supabase
-app.use('/api', authMiddleware);
-
-app.post('/api/conversoes', async (req, res) => {
-  try {
-    const { nomeArquivo, storagePath } = req.body;
-    const user_id = req.user.id; // Usuário identificado pelo middleware
-
-    if (!nomeArquivo) {
-      return res.status(400).json({ error: 'nomeArquivo é obrigatório.' });
-    }
-
-    const { error } = await supabaseAdmin.from('conversoes').insert({
-      nome_arquivo: nomeArquivo,
-      storage_path: storagePath ?? null,
-      user_id: user_id
-    });
-
-    if (error) {
-      return res.status(500).json({ error: error.message });
-    }
-
-    return res.status(201).json({ ok: true });
-  } catch (error) {
-    return res.status(500).json({
-      error: error instanceof Error ? error.message : 'Erro inesperado.'
-    });
-  }
-});
-
-app.get('/api/conversoes', async (req, res) => {
-  try {
-    const user_id = req.user.id;
-    const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
-    const limit = Math.min(20, Math.max(1, Number.parseInt(String(req.query.limit ?? '5'), 10) || 5));
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    const { data, error, count } = await supabaseAdmin
-      .from('conversoes')
-      .select('id, nome_arquivo, criado_em, storage_path', { count: 'exact' })
-      .eq('user_id', user_id)
-      .order('criado_em', { ascending: false })
-      .range(from, to);
-
-    if (error) throw error;
-
-    return res.status(200).json({
-      data: data ?? [],
-      total: count ?? 0,
-      page,
-      totalPages: Math.max(1, Math.ceil((count ?? 0) / limit))
-    });
-  } catch (error) {
-    return res.status(500).json({ error: error?.message || 'Erro interno ao carregar conversões.' });
-  }
-});
-
-app.post('/api/youtube/convert', async (req, res) => {
-  let tempFilePath = '';
-  let stream;
-  try {
-    const { youtubeUrl } = req.body;
-    const user_id = req.user.id;
-
-    if (!ytdl.validateURL(youtubeUrl)) {
-      return res.status(400).json({ error: 'URL do YouTube inválida.' });
-    }
-
-    console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
-
-    // 1. Configurar agente (proxy dedicado > cookies > padrão)
-    const agent = createYouTubeAgent();
-
-    const info = await getYouTubeInfoWithFallback(youtubeUrl, agent);
-    const fileName = `${safeFileName(info?.videoDetails?.title)}.mp3`;
-    const timestamp = Date.now();
-    console.log(`[YouTube] Título: ${info?.videoDetails?.title || 'N/A'}`);
-    const storagePath = `${user_id}/yt-${timestamp}-${fileName}`;
-
-    // 2. Criar caminho temporário para o arquivo convertido
-    tempFilePath = path.join(os.tmpdir(), `convert-${timestamp}.mp3`);
-
-    // 3. Baixar e converter usando stream
-    await new Promise((resolve, reject) => {
-      const streamOptions = {
-        quality: 'highestaudio', 
-        filter: 'audioonly',
-        highWaterMark: 1 << 25,
-        ...buildYtdlOptions(agent, 'web')
-      };
-
-      // Evita chamar `getInfo()` duas vezes (reduz requests e chance de bloqueio/rate limit)
-      stream = ytdl.downloadFromInfo(info, streamOptions);
-
-      // `PassThrough` não tem `setTimeout()`: implementa timeout manual
-      const downloadTimeoutMs = 45_000;
-      const timeoutHandle = setTimeout(() => {
-        if (stream && !stream.destroyed) {
-          stream.destroy(new Error('Timeout ao baixar áudio do YouTube.'));
-        }
-      }, downloadTimeoutMs);
-      timeoutHandle.unref?.();
-
-      const clearTimeoutSafe = () => clearTimeout(timeoutHandle);
-      stream.once('end', clearTimeoutSafe);
-      stream.once('close', clearTimeoutSafe);
-      stream.once('error', clearTimeoutSafe);
-
-      ffmpeg(stream)
-        .toFormat('mp3')
-        .audioBitrate(192)
-        .on('error', (err) => {
-          console.error('[YouTube] Erro no FFmpeg:', err);
-          reject(err);
-        })
-        .on('end', () => {
-          console.log('[YouTube] Conversão local concluída.');
-          resolve(true);
-        })
-        .save(tempFilePath);
-    });
-
-    // 4. Ler o arquivo convertido e fazer upload para o Supabase
-    const fileBuffer = await fs.promises.readFile(tempFilePath);
-    const { error: uploadError } = await supabaseAdmin.storage
-      .from('converted-audio')
-      .upload(storagePath, fileBuffer, {
-        contentType: 'audio/mpeg',
-        upsert: false
-      });
-
-    if (uploadError) throw uploadError;
-
-    // 5. Salvar no banco de dados
-    const { error: dbError } = await supabaseAdmin.from('conversoes').insert({
-      nome_arquivo: fileName,
-      storage_path: storagePath,
-      user_id: user_id
-    });
-
-    if (dbError) throw dbError;
-
-    // 6. Gerar URL pública (ou assinada)
-    const { data: { publicUrl } } = supabaseAdmin.storage
-      .from('converted-audio')
-      .getPublicUrl(storagePath);
-
-    console.log('[YouTube] Sucesso total!');
-    return res.status(200).json({ 
-      ok: true, 
-      downloadUrl: publicUrl,
-      fileName: fileName
-    });
-
-  } catch (error) {
-    const upstreamStatus = extractHttpStatusFromError(error);
-    console.error('[YouTube] Erro Interno:', error);
-
-    if (error?.code === 'YT_BOT_CHALLENGE' || isBotChallengeError(error)) {
-      const retryAfterSeconds = Math.max(
-        1,
-        Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
-      );
-
-      res.setHeader('Retry-After', String(retryAfterSeconds));
-      return res.status(429).json({
-        error: 'YouTube solicitou verificação anti-bot para este servidor. Tente novamente em alguns minutos.',
-        code: 'YT_BOT_CHALLENGE',
-        retryAfterSeconds
-      });
-    }
-
-    if (upstreamStatus === 429) {
-      res.setHeader('Retry-After', String(YT_RETRY_AFTER_SECONDS));
-      return res.status(429).json({
-        error: 'YouTube temporariamente limitou a conversão. Tente novamente em alguns minutos.',
-        code: 'YT_RATE_LIMIT',
-        retryAfterSeconds: YT_RETRY_AFTER_SECONDS
-      });
-    }
-
-    if (upstreamStatus && upstreamStatus >= 400 && upstreamStatus < 500) {
-      return res.status(502).json({
-        error: 'Falha temporária ao consultar o YouTube. Tente novamente.',
-        code: upstreamStatus
-      });
-    }
-
-    return res.status(500).json({ 
-      error: 'Erro no servidor durante a conversão',
-      details: error?.message || 'Falha inesperada.',
-      code: error?.code
-    });
-  } finally {
-    if (stream && !stream.destroyed) {
-      stream.destroy();
-    }
-
-    // Limpar arquivo temporário
-    if (tempFilePath && fs.existsSync(tempFilePath)) {
-      try {
-        await fs.promises.unlink(tempFilePath);
-      } catch (cleanupError) {
-        console.error('[YouTube] Erro ao limpar arquivo temporário:', cleanupError?.message || cleanupError);
-      }
-    }
-  }
-});
-
-app.listen(port, () => {
-  const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
-  console.log(`[Backend] Rodando em modo: ${mode}`);
-  console.log(`[Backend] API disponível na porta: ${port}`);
-});

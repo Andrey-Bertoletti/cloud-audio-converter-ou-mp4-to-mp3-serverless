@@ -61,8 +61,11 @@ O endpoint `POST /api/youtube/convert` baixa o áudio do YouTube e converte para
 
 Variáveis de ambiente (veja `.env.example`):
 
-- `YOUTUBE_COOKIE` (JSON) ou `YOUTUBE_COOKIE_BASE64`: cookies exportados do navegador (sessão logada).
-- `YOUTUBE_COOKIE_HEADER`: alternativa em formato de header `Cookie:` bruto.
-- `YOUTUBE_PROXY_URI`: opcional (restrição regional).
+- `YOUTUBE_COOKIE`: aceita JSON array exportado, cookie header ou base64 (sessão logada).
+- `YOUTUBE_PROXY_URL`: recomendado proxy residencial/ISP estável (IPs de datacenter costumam ser bloqueados).
+
+Segurança: se cookies/proxy já foram expostos em logs, prints ou Git, trate como comprometidos e **rotacione/regenere** imediatamente.
 
 Observação importante: a mensagem **"Sign in to confirm you’re not a bot"** é um bloqueio do próprio YouTube (muito comum em IPs de datacenter). Mesmo com cookies/proxy, não é possível garantir 100% de sucesso em produção — quando ocorrer, o backend retorna `429` com `Retry-After`.
+
+Fallback técnico: quando o `@distube/ytdl-core` falha com bloqueio/429, o backend tenta um fallback com `yt-dlp` (via `youtube-dl-exec`). Em provedores onde Python não está disponível, pode ser necessário instalar `python3` ou ajustar a configuração do ambiente para suportar a execução do `yt-dlp`.
