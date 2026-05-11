@@ -29,6 +29,12 @@ const YT_METADATA_MAX_RETRIES = 3;
 const YT_METADATA_BACKOFF_MS = 1200;
 const YT_RETRY_AFTER_SECONDS = 120;
 const YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS = 300;
+let ytBotChallengeBlockedUntilMs = 0;
+
+function remainingSeconds(untilMs) {
+  if (!untilMs) return 0;
+  return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
+}
 
 function safeFileName(input) {
   const baseName = String(input || '')
@@ -57,14 +63,14 @@ function isBotChallengeError(err) {
     .join(' ')
     .toLowerCase();
 
+  const normalized = text.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+
+  // Evita falso-positivo em erros genéricos que contenham "bot" no stack
   return (
-    text.includes('sign in to confirm') ||
-    text.includes('confirm you\'re not a bot') ||
-    text.includes('confirm you are not a bot') ||
-    text.includes('not a bot') ||
-    text.includes('unrecoverableerror') ||
-    text.includes('playerror') ||
-    text.includes('bot')
+    (normalized.includes('sign in to confirm') && normalized.includes('not a bot')) ||
+    normalized.includes("confirm you're not a bot") ||
+    normalized.includes('confirm you are not a bot') ||
+    (normalized.includes('faca login para confirmar') && normalized.includes('nao e um bot'))
   );
 }
 
@@ -127,8 +133,37 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function parseCookieHeaderToArray(cookieHeader) {
+  const raw = String(cookieHeader || '').trim();
+  if (!raw) return [];
+
+  return raw
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const index = part.indexOf('=');
+      if (index <= 0) return null;
+      const name = part.slice(0, index).trim();
+      const value = part.slice(index + 1).trim();
+      if (!name || !value) return null;
+
+      return {
+        domain: '.youtube.com',
+        hostOnly: false,
+        httpOnly: false,
+        name,
+        path: '/',
+        sameSite: 'lax',
+        secure: true,
+        value
+      };
+    })
+    .filter(Boolean);
+}
+
 function readYouTubeCookiesFromEnv() {
-  const rawJson = process.env.YOUTUBE_COOKIE;
+  const rawJson = process.env.YOUTUBE_COOKIE || process.env.YOUTUBE_COOKIES;
   if (rawJson) {
     try {
       const parsed = JSON.parse(rawJson);
@@ -136,17 +171,39 @@ function readYouTubeCookiesFromEnv() {
         return parsed;
       }
     } catch (error) {
-      console.error('[YouTube] YOUTUBE_COOKIE inválido (JSON malformado).');
+      const parsedFromHeader = parseCookieHeaderToArray(rawJson);
+      if (parsedFromHeader.length > 0) {
+        return parsedFromHeader;
+      }
+      console.error('[YouTube] YOUTUBE_COOKIE inválido (JSON/cookie header).');
     }
   }
 
-  const rawBase64 = process.env.YOUTUBE_COOKIE_BASE64;
+  const rawHeader = process.env.YOUTUBE_COOKIE_HEADER;
+  if (rawHeader) {
+    const parsedFromHeader = parseCookieHeaderToArray(rawHeader);
+    if (parsedFromHeader.length > 0) {
+      return parsedFromHeader;
+    }
+  }
+
+  const rawBase64 =
+    process.env.YOUTUBE_COOKIE_BASE64 ||
+    process.env.YOUTUBE_COOKIES_BASE64 ||
+    process.env.YOUTUBE_COOKIE_HEADER_BASE64;
   if (rawBase64) {
     try {
       const decoded = Buffer.from(rawBase64, 'base64').toString('utf-8');
-      const parsed = JSON.parse(decoded);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed;
+      try {
+        const parsed = JSON.parse(decoded);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch (_jsonError) {
+        const parsedFromHeader = parseCookieHeaderToArray(decoded);
+        if (parsedFromHeader.length > 0) {
+          return parsedFromHeader;
+        }
       }
     } catch (error) {
       console.error('[YouTube] YOUTUBE_COOKIE_BASE64 inválido (base64/json).');
@@ -173,7 +230,7 @@ function createYouTubeAgent() {
   if (cookies.length > 0) {
     try {
       const agent = ytdl.createAgent(cookies);
-      console.log('[YouTube] Agente criado com sucesso usando cookies JSON.');
+      console.log('[YouTube] Agente criado com sucesso usando cookies.');
       return agent;
     } catch (error) {
       console.error('[YouTube] Erro ao criar agente com cookies:', error?.message || error);
@@ -185,6 +242,16 @@ function createYouTubeAgent() {
 }
 
 async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
+  const cooldownSeconds = remainingSeconds(ytBotChallengeBlockedUntilMs);
+  if (cooldownSeconds > 0) {
+    const err = new Error(
+      `YouTube solicitou verificação anti-bot recentemente. Aguarde ${cooldownSeconds}s e tente novamente.`
+    );
+    err.code = 'YT_BOT_CHALLENGE';
+    err.retryAfterSeconds = cooldownSeconds;
+    throw err;
+  }
+
   const profiles = ['tv', 'web'];
   let lastError;
 
@@ -197,16 +264,23 @@ async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
         lastError = err;
         console.error(`[YouTube] Falha no perfil ${profile} (tentativa ${attempt}):`, err?.message || err);
 
-        const retryable = isRateLimitError(err) || isBotChallengeError(err);
-        if (!retryable) {
+        const botChallenge = isBotChallengeError(err);
+        const rateLimited = isRateLimitError(err);
+
+        // Em "confirm you're not a bot", retries rápidos só pioram o bloqueio
+        if (botChallenge) {
+          ytBotChallengeBlockedUntilMs = Date.now() + YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS * 1000;
+          throw err;
+        }
+
+        if (!rateLimited) {
           throw err;
         }
 
         if (attempt < YT_METADATA_MAX_RETRIES) {
           const jitter = Math.floor(Math.random() * 350);
           const backoff = YT_METADATA_BACKOFF_MS * attempt + jitter;
-          const reason = isBotChallengeError(err) ? 'desafio anti-bot' : '429';
-          console.log(`[YouTube] ${reason} recebido. Aguardando ${backoff}ms para nova tentativa...`);
+          console.log(`[YouTube] 429 recebido. Aguardando ${backoff}ms para nova tentativa...`);
           await wait(backoff);
         }
       }
@@ -395,10 +469,22 @@ app.post('/api/youtube/convert', async (req, res) => {
         ...buildYtdlOptions(agent, 'web')
       };
 
-      stream = ytdl(youtubeUrl, streamOptions);
-      stream.setTimeout(45000, () => {
-        stream.destroy(new Error('Timeout ao baixar áudio do YouTube.'));
-      });
+      // Evita chamar `getInfo()` duas vezes (reduz requests e chance de bloqueio/rate limit)
+      stream = ytdl.downloadFromInfo(info, streamOptions);
+
+      // `PassThrough` não tem `setTimeout()`: implementa timeout manual
+      const downloadTimeoutMs = 45_000;
+      const timeoutHandle = setTimeout(() => {
+        if (stream && !stream.destroyed) {
+          stream.destroy(new Error('Timeout ao baixar áudio do YouTube.'));
+        }
+      }, downloadTimeoutMs);
+      timeoutHandle.unref?.();
+
+      const clearTimeoutSafe = () => clearTimeout(timeoutHandle);
+      stream.once('end', clearTimeoutSafe);
+      stream.once('close', clearTimeoutSafe);
+      stream.once('error', clearTimeoutSafe);
 
       ffmpeg(stream)
         .toFormat('mp3')
@@ -450,12 +536,17 @@ app.post('/api/youtube/convert', async (req, res) => {
     const upstreamStatus = extractHttpStatusFromError(error);
     console.error('[YouTube] Erro Interno:', error);
 
-    if (isBotChallengeError(error)) {
-      res.setHeader('Retry-After', String(YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS));
+    if (error?.code === 'YT_BOT_CHALLENGE' || isBotChallengeError(error)) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
+      );
+
+      res.setHeader('Retry-After', String(retryAfterSeconds));
       return res.status(429).json({
         error: 'YouTube solicitou verificação anti-bot para este servidor. Tente novamente em alguns minutos.',
         code: 'YT_BOT_CHALLENGE',
-        retryAfterSeconds: YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
+        retryAfterSeconds
       });
     }
 

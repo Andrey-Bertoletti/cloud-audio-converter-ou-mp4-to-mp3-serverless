@@ -410,7 +410,9 @@ export class AppComponent implements OnInit {
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Erro no servidor');
+      if (!response.ok) {
+        throw new Error(this.formatYouTubeErrorMessage(response.status, result));
+      }
 
       this.cleanupOutputUrl();
       this.outputUrl = result.downloadUrl;
@@ -418,12 +420,32 @@ export class AppComponent implements OnInit {
       this.showToast('Vídeo do YouTube convertido!', 'success');
       await this.carregarConversoes();
     } catch (error: any) {
-      this.showToast(error.message || 'Erro ao converter YouTube', 'error');
+      this.errorMessage = error?.message || 'Erro ao converter YouTube';
+      this.showToast(this.errorMessage, 'error');
+      this.cdr.markForCheck();
     } finally {
       this.isYtConverting = false;
       this.ytStatus = '';
       this.cdr.markForCheck();
     }
+  }
+
+  private formatYouTubeErrorMessage(status: number, result: any): string {
+    if (status === 429) {
+      const retryAfterSeconds = Number(result?.retryAfterSeconds);
+      if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        const minutes = Math.max(1, Math.ceil(retryAfterSeconds / 60));
+        return `YouTube limitou temporariamente a conversão. Tente novamente em cerca de ${minutes} minuto(s).`;
+      }
+
+      return 'YouTube limitou temporariamente a conversão. Tente novamente em alguns minutos.';
+    }
+
+    if (status === 502) {
+      return 'Falha temporária ao consultar o YouTube. Tente novamente em instantes.';
+    }
+
+    return result?.error || 'Erro ao converter YouTube';
   }
 
   baixarArquivo(): void {
