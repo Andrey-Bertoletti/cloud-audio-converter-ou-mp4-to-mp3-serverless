@@ -114,6 +114,18 @@ function isYouTubeBotOrRateLimitError(err) {
   );
 }
 
+function isYoutubeBotChallenge(error) {
+  const rawText = [error?.message, error?.code, error?.stack, String(error)].filter(Boolean).join(' ');
+  const text = rawText
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  return /yt_bot_challenge|youtube_bot_challenge|sign in to confirm|faca login para confirmar|too many requests|429/i.test(
+    text
+  );
+}
+
 function cookieHeaderToCookieArray(cookieHeader) {
   const raw = String(cookieHeader || '').trim();
   if (!raw) return [];
@@ -193,7 +205,7 @@ async function getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeade
     const err = new Error(
       `YouTube solicitou verificação anti-bot recentemente. Aguarde ${cooldownSeconds}s e tente novamente.`
     );
-    err.code = 'YOUTUBE_BOT_CHALLENGE';
+    err.code = 'YT_BOT_CHALLENGE';
     err.retryAfterSeconds = cooldownSeconds;
     throw err;
   }
@@ -230,7 +242,7 @@ async function getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeade
 
   if (isYouTubeBotOrRateLimitError(lastError)) {
     state.ytBotChallengeBlockedUntilMs = Date.now() + YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS * 1000;
-    lastError.code = 'YOUTUBE_BOT_CHALLENGE';
+    lastError.code = 'YT_BOT_CHALLENGE';
     lastError.retryAfterSeconds = YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS;
   }
 
@@ -422,35 +434,48 @@ function createApp(options = {}) {
       const agent = proxyUrl ? ytdl.createProxyAgent({ uri: proxyUrl }, cookiesArray) : ytdl.createAgent(cookiesArray);
 
       const timestamp = Date.now();
-      let info;
       let titleForFile = `youtube-${timestamp}`;
+      tempFilePath = path.join(os.tmpdir(), `convert-${timestamp}.mp3`);
+
+      safeLog('log', '[YouTube] Tentando conversão com ytdl-core...');
       try {
-        info = await getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeader, state });
+        const info = await getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeader, state });
         titleForFile = info?.videoDetails?.title || titleForFile;
-      } catch (infoErr) {
-        // Se o ytdl-core falhar com bloqueio/429, tenta fallback com yt-dlp
-        if (!isYouTubeBotOrRateLimitError(infoErr) && infoErr?.code !== 'YOUTUBE_BOT_CHALLENGE') {
-          throw infoErr;
+        await convertWithYtdlCore({ ytdl, youtubeUrl, info, agent, cookieHeader, tempFilePath });
+        safeLog('log', '[YouTube] ytdl-core concluído.');
+      } catch (error) {
+        if (isYoutubeBotChallenge(error)) {
+          safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
+
+          try {
+            await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookieHeader, proxyUrl });
+            safeLog('log', '[YouTube] yt-dlp fallback concluído.');
+          } catch (fallbackError) {
+            safeLog.warn('[YouTube] fallback yt-dlp também falhou.', {
+              code: fallbackError?.code,
+              message: fallbackError?.message
+            });
+
+            if (fallbackError?.code === 'YTDLP_NOT_AVAILABLE') {
+              return res.status(500).json({
+                error: 'YTDLP_NOT_AVAILABLE',
+                message: 'yt-dlp/ffmpeg não está disponível no ambiente do servidor.'
+              });
+            }
+
+            if (isYoutubeBotChallenge(fallbackError)) {
+              return botChallengeResponse(res, YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS);
+            }
+
+            throw fallbackError;
+          }
         }
-        info = null;
+
+        if (!isYoutubeBotChallenge(error)) throw error;
       }
 
       const fileName = `${safeFileName(titleForFile)}.mp3`;
       const storagePath = `${user_id}/yt-${timestamp}-${fileName}`;
-
-      tempFilePath = path.join(os.tmpdir(), `convert-${timestamp}.mp3`);
-
-      if (info) {
-        try {
-          await convertWithYtdlCore({ ytdl, youtubeUrl, info, agent, cookieHeader, tempFilePath });
-        } catch (err) {
-          if (!isYouTubeBotOrRateLimitError(err)) throw err;
-          await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookieHeader, proxyUrl });
-        }
-      } else {
-        // Metadata falhou (bot/429): tenta yt-dlp direto
-        await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookieHeader, proxyUrl });
-      }
 
       const fileBuffer = await fs.promises.readFile(tempFilePath);
       const { error: uploadError } = await supabaseAdmin.storage
@@ -489,12 +514,19 @@ function createApp(options = {}) {
         ytdlpOutput.includes('too many requests') ||
         ytdlpOutput.includes('429');
 
-      if (ytdlpBlocked || isYouTubeBotOrRateLimitError(error) || error?.code === 'YOUTUBE_BOT_CHALLENGE') {
+      if (ytdlpBlocked || isYoutubeBotChallenge(error)) {
         const retryAfterSeconds = Math.max(
           1,
           Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
         );
         return botChallengeResponse(res, retryAfterSeconds);
+      }
+
+      if (error?.code === 'YTDLP_NOT_AVAILABLE') {
+        return res.status(500).json({
+          error: 'YTDLP_NOT_AVAILABLE',
+          message: 'yt-dlp/ffmpeg não está disponível no ambiente do servidor.'
+        });
       }
 
       return internalServerErrorResponse(res, error);

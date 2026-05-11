@@ -5,8 +5,23 @@ const cron = require('node-cron');
 const { createApp } = require('./app');
 const { supabaseAdmin } = require('./config/supabaseAdmin');
 const { safeLog } = require('./utils/safeLog');
+const { checkYtDlpAndFfmpegAvailability } = require('./youtube/ytDlpFallback');
 
 const app = createApp();
+
+async function logMediaToolingHealth() {
+  const status = await checkYtDlpAndFfmpegAvailability();
+  if (status.ok) {
+    safeLog('log', `[Backend] yt-dlp disponível: ${status.ytDlpVersion}`);
+    safeLog('log', `[Backend] ffmpeg disponível: ${status.ffmpegVersion}`);
+    return;
+  }
+
+  safeLog('warn', '[Backend] yt-dlp/ffmpeg não estão disponíveis. O fallback pode falhar.', {
+    ytDlpVersion: status.ytDlpVersion || null,
+    ffmpegVersion: status.ffmpegVersion || null
+  });
+}
 
 async function performCleanup() {
   safeLog('log', '[Cleanup] Iniciando limpeza de arquivos com mais de 24 horas...');
@@ -57,8 +72,14 @@ if (require.main === module) {
     const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
     safeLog('log', `[Backend] Rodando em modo: ${mode}`);
     safeLog('log', `[Backend] API disponível na porta: ${port}`);
+    logMediaToolingHealth().catch((err) => {
+      safeLog('warn', '[Backend] Falha ao validar yt-dlp/ffmpeg no startup.', {
+        name: err?.name,
+        code: err?.code,
+        message: err?.message
+      });
+    });
   });
 }
 
 module.exports = { app, performCleanup };
-

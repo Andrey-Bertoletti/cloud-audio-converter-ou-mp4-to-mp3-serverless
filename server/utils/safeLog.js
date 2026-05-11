@@ -60,11 +60,13 @@ function sanitizeForLog(value, seen = new WeakSet()) {
   if (typeof value === 'bigint') return Number(value);
 
   if (value instanceof Error) {
+    const showStack = process.env.NODE_ENV === 'development';
     return {
       name: value.name,
       message: redactString(value.message),
       code: value.code,
-      statusCode: value.statusCode
+      statusCode: value.statusCode,
+      ...(showStack ? { stack: redactString(value.stack || '') } : null)
     };
   }
 
@@ -82,6 +84,10 @@ function sanitizeForLog(value, seen = new WeakSet()) {
       const lowerKey = key.toLowerCase();
       if (SENSITIVE_HEADER_KEYS.includes(lowerKey) || SENSITIVE_ENV_KEYS.includes(key)) {
         out[key] = '[REDACTED]';
+        continue;
+      }
+      if (lowerKey === 'stack' && process.env.NODE_ENV !== 'development') {
+        out[key] = '[OMITTED]';
         continue;
       }
       out[key] = sanitizeForLog(rawVal, seen);
@@ -105,9 +111,13 @@ function safeLog(level, message, meta) {
   console[level](`[${level.toUpperCase()}] ${redactString(prefix)}`, sanitizedMeta);
 }
 
+safeLog.log = (message, meta) => safeLog('log', message, meta);
+safeLog.info = (message, meta) => safeLog('log', message, meta);
+safeLog.warn = (message, meta) => safeLog('warn', message, meta);
+safeLog.error = (message, meta) => safeLog('error', message, meta);
+
 module.exports = {
   redactString,
   sanitizeForLog,
   safeLog
 };
-

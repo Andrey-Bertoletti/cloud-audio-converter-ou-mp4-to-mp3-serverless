@@ -1,9 +1,89 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
 
 const ffmpegPath = require('ffmpeg-static');
 const { safeLog } = require('../utils/safeLog');
+
+const execFileAsync = promisify(execFile);
+
+let cachedDepsStatus = null;
+
+async function getFirstLine(cmd, args, options = {}) {
+  try {
+    const { stdout, stderr } = await execFileAsync(cmd, args, {
+      timeout: 8000,
+      windowsHide: true,
+      ...options
+    });
+    const out = String(stdout || stderr || '').trim();
+    return out.split(/\r?\n/)[0] || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+async function checkYtDlpAndFfmpegAvailability() {
+  if (cachedDepsStatus) return cachedDepsStatus;
+
+  const status = {
+    ok: false,
+    ytDlpVersion: '',
+    ffmpegVersion: ''
+  };
+
+  try {
+    const youtubedl = require('youtube-dl-exec');
+    const ytDlpBin = youtubedl?.constants?.YOUTUBE_DL_PATH;
+
+    const ytDlpCandidates = [];
+    if (ytDlpBin && fs.existsSync(ytDlpBin)) ytDlpCandidates.push(ytDlpBin);
+    ytDlpCandidates.push('yt-dlp');
+
+    for (const candidate of ytDlpCandidates) {
+      const versionLine = await getFirstLine(candidate, ['--version']);
+      if (versionLine) {
+        status.ytDlpVersion = versionLine;
+        break;
+      }
+    }
+
+    const ffmpegCandidates = [];
+    if (ffmpegPath && fs.existsSync(ffmpegPath)) ffmpegCandidates.push(ffmpegPath);
+    ffmpegCandidates.push('ffmpeg');
+
+    for (const candidate of ffmpegCandidates) {
+      const versionLine = await getFirstLine(candidate, ['-version']);
+      if (versionLine) {
+        status.ffmpegVersion = versionLine;
+        break;
+      }
+    }
+
+    status.ok = Boolean(status.ytDlpVersion) && Boolean(status.ffmpegVersion);
+  } catch (err) {
+    safeLog('warn', '[YouTube][yt-dlp] Falha ao checar dependências (sem detalhes sensíveis).', {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message
+    });
+  }
+
+  cachedDepsStatus = status;
+  return status;
+}
+
+async function ensureYtDlpAndFfmpegAvailable() {
+  const status = await checkYtDlpAndFfmpegAvailability();
+  if (!status.ok) {
+    const err = new Error('yt-dlp/ffmpeg não está disponível no ambiente do servidor.');
+    err.code = 'YTDLP_NOT_AVAILABLE';
+    throw err;
+  }
+  return status;
+}
 
 function cookieHeaderToNetscape(cookieHeader) {
   const header = String(cookieHeader || '').trim();
@@ -64,6 +144,8 @@ function collectOutput(stream, maxBytes = 64 * 1024) {
 }
 
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, cookieHeader, proxyUrl }) {
+  await ensureYtDlpAndFfmpegAvailable();
+
   const youtubedl = require('youtube-dl-exec');
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-'));
@@ -141,6 +223,6 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, cookieHeader, proxyUrl
 }
 
 module.exports = {
+  checkYtDlpAndFfmpegAvailability,
   runYtDlpToMp3
 };
-
