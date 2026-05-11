@@ -36,7 +36,44 @@ function safeFileName(input) {
 }
 
 function isRateLimitError(err) {
-  return err?.statusCode === 429 || err?.code === 429 || String(err?.message || '').includes('429');
+  return extractHttpStatusFromError(err) === 429;
+}
+
+function extractHttpStatusFromError(err) {
+  const candidates = [
+    err?.statusCode,
+    err?.code,
+    err?.status,
+    err?.response?.status,
+    err?.cause?.statusCode,
+    err?.cause?.code,
+    err?.cause?.status,
+    err?.cause?.response?.status
+  ];
+
+  for (const value of candidates) {
+    const parsed = Number(value);
+    if (Number.isInteger(parsed) && parsed >= 100 && parsed <= 599) {
+      return parsed;
+    }
+  }
+
+  const text = [
+    String(err?.message || ''),
+    String(err?.stack || ''),
+    String(err?.cause?.message || ''),
+    String(err?.cause?.stack || '')
+  ].join(' ');
+
+  const matched = text.match(/\b([1-5]\d{2})\b/);
+  if (matched) {
+    const parsed = Number(matched[1]);
+    if (parsed >= 100 && parsed <= 599) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function buildYtdlOptions(agent, profile) {
@@ -317,12 +354,20 @@ app.post('/api/youtube/convert', async (req, res) => {
     });
 
   } catch (error) {
+    const upstreamStatus = extractHttpStatusFromError(error);
     console.error('[YouTube] Erro Interno:', error);
 
-    if (isRateLimitError(error)) {
+    if (upstreamStatus === 429) {
       return res.status(429).json({
         error: 'YouTube temporariamente limitou a conversão. Tente novamente em alguns minutos.',
         code: 429
+      });
+    }
+
+    if (upstreamStatus && upstreamStatus >= 400 && upstreamStatus < 500) {
+      return res.status(502).json({
+        error: 'Falha temporária ao consultar o YouTube. Tente novamente.',
+        code: upstreamStatus
       });
     }
 
