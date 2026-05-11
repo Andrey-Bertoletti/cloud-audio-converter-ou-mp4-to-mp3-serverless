@@ -13,6 +13,17 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+const YT_HEADERS_TV = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'X-Youtube-Client-Name': '5',
+  'X-Youtube-Client-Version': '2.20230922.00.00'
+};
+
+const YT_HEADERS_WEB = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7'
+};
+
 function safeFileName(input) {
   const baseName = String(input || '')
     .normalize('NFKD')
@@ -22,6 +33,49 @@ function safeFileName(input) {
 
   const clipped = baseName.slice(0, 80);
   return clipped || `audio-${Date.now()}`;
+}
+
+function isRateLimitError(err) {
+  return err?.statusCode === 429 || err?.code === 429 || String(err?.message || '').includes('429');
+}
+
+function buildYtdlOptions(agent, profile) {
+  if (profile === 'tv') {
+    return {
+      agent,
+      requestOptions: {
+        headers: YT_HEADERS_TV
+      }
+    };
+  }
+
+  return {
+    agent,
+    requestOptions: {
+      headers: YT_HEADERS_WEB
+    }
+  };
+}
+
+async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
+  const profiles = ['tv', 'web'];
+  let lastError;
+
+  for (const profile of profiles) {
+    try {
+      console.log(`[YouTube] Tentando metadata com perfil: ${profile}`);
+      return await ytdl.getInfo(youtubeUrl, buildYtdlOptions(agent, profile));
+    } catch (err) {
+      lastError = err;
+      console.error(`[YouTube] Falha no perfil ${profile}:`, err?.message || err);
+
+      if (!isRateLimitError(err)) {
+        throw err;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 // Configura o caminho do ffmpeg estático
@@ -171,6 +225,7 @@ app.get('/api/conversoes', async (req, res) => {
 
 app.post('/api/youtube/convert', async (req, res) => {
   let tempFilePath = '';
+  let stream;
   try {
     const { youtubeUrl } = req.body;
     const user_id = req.user.id;
@@ -192,18 +247,7 @@ app.post('/api/youtube/convert', async (req, res) => {
       }
     }
 
-    const options = { 
-      agent,
-      requestOptions: {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-          'X-Youtube-Client-Name': '5', // 5 é o ID para TV
-          'X-Youtube-Client-Version': '2.20230922.00.00'
-        }
-      }
-    };
-
-    const info = await ytdl.getInfo(youtubeUrl, options);
+    const info = await getYouTubeInfoWithFallback(youtubeUrl, agent);
     const fileName = `${safeFileName(info?.videoDetails?.title)}.mp3`;
     const timestamp = Date.now();
     console.log(`[YouTube] Título: ${info?.videoDetails?.title || 'N/A'}`);
@@ -214,20 +258,17 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     // 3. Baixar e converter usando stream
     await new Promise((resolve, reject) => {
-      const streamOptions = { 
+      const streamOptions = {
         quality: 'highestaudio', 
         filter: 'audioonly',
-        agent: agent,
-        requestOptions: {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'X-Youtube-Client-Name': '5',
-            'X-Youtube-Client-Version': '2.20230922.00.00'
-          }
-        }
+        highWaterMark: 1 << 25,
+        ...buildYtdlOptions(agent, 'web')
       };
 
-      const stream = ytdl(youtubeUrl, streamOptions);
+      stream = ytdl(youtubeUrl, streamOptions);
+      stream.setTimeout(45000, () => {
+        stream.destroy(new Error('Timeout ao baixar áudio do YouTube.'));
+      });
 
       ffmpeg(stream)
         .toFormat('mp3')
@@ -277,12 +318,24 @@ app.post('/api/youtube/convert', async (req, res) => {
 
   } catch (error) {
     console.error('[YouTube] Erro Interno:', error);
+
+    if (isRateLimitError(error)) {
+      return res.status(429).json({
+        error: 'YouTube temporariamente limitou a conversão. Tente novamente em alguns minutos.',
+        code: 429
+      });
+    }
+
     return res.status(500).json({ 
       error: 'Erro no servidor durante a conversão',
       details: error?.message || 'Falha inesperada.',
       code: error?.code
     });
   } finally {
+    if (stream && !stream.destroyed) {
+      stream.destroy();
+    }
+
     // Limpar arquivo temporário
     if (tempFilePath && fs.existsSync(tempFilePath)) {
       try {
