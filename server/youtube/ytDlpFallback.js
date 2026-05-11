@@ -68,6 +68,82 @@ function maskPath(input) {
   return path.basename(normalized);
 }
 
+function assertValidYoutubeUrl(videoUrl) {
+  if (!videoUrl || typeof videoUrl !== 'string') {
+    const err = new Error('URL do YouTube ausente no fallback yt-dlp.');
+    err.code = 'YTDLP_MISSING_URL';
+    throw err;
+  }
+
+  const trimmed = videoUrl.trim();
+  if (!/^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(trimmed)) {
+    const err = new Error('URL do YouTube inválida no fallback yt-dlp.');
+    err.code = 'YTDLP_INVALID_URL';
+    throw err;
+  }
+
+  return trimmed;
+}
+
+function isMissingYoutubeUrlErrorText(text) {
+  return /you must provide at least one url/i.test(String(text || ''));
+}
+
+function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl }) {
+  const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
+  const outTemplate = `${base}.%(ext)s`;
+
+  const args = [
+    safeVideoUrl,
+    '--no-playlist',
+    '--no-warnings',
+    '--no-progress',
+    '--format',
+    'bestaudio/best',
+    '--extract-audio',
+    '--audio-format',
+    'mp3',
+    '--audio-quality',
+    '0',
+    '--ffmpeg-location',
+    ffmpegPath,
+    '--output',
+    outTemplate,
+    '--cookies',
+    cookieFilePath
+  ];
+
+  if (proxyUrl) {
+    args.push('--proxy', proxyUrl);
+  }
+
+  return args;
+}
+
+function logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath, proxyUrl }) {
+  let urlHost = '';
+  try {
+    urlHost = new URL(safeVideoUrl).host;
+  } catch {
+    urlHost = '';
+  }
+
+  safeLog.info('[YouTube] Iniciando yt-dlp fallback', {
+    hasUrl: Boolean(safeVideoUrl),
+    urlHost,
+    argCount: buildYtDlpArgs({
+      safeVideoUrl,
+      outputMp3Path: '[temp].mp3',
+      cookieFilePath,
+      proxyUrl
+    }).length,
+    hasCookiesFile: Boolean(cookieFilePath),
+    hasProxy: Boolean(proxyUrl),
+    hasFfmpeg: Boolean(ffmpegPath),
+    outputDir: '[temp]'
+  });
+}
+
 async function checkYtDlpAndFfmpegAvailability() {
   if (cachedDepsStatus) return cachedDepsStatus;
 
@@ -380,6 +456,12 @@ function maskProxyUrl(value) {
 }
 
 function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
+  if (!Array.isArray(args) || args.length === 0 || !args.every((arg) => typeof arg === 'string')) {
+    const err = new Error('Invalid yt-dlp args');
+    err.code = 'YTDLP_INVALID_ARGS';
+    throw err;
+  }
+
   const cmd = normalizeExecutablePath(ytdlpPath || resolveYtDlpPath());
 
   return new Promise((resolve, reject) => {
@@ -448,6 +530,7 @@ function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookieHeader, proxyUrl, timeoutMs }) {
   const status = await ensureYtDlpAndFfmpegAvailable();
   const ytdlpPath = status.ytDlpPath || resolveYtDlpPath();
+  const safeVideoUrl = assertValidYoutubeUrl(youtubeUrl);
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-'));
   const cookieFilePath = path.join(tempDir, 'cookies.txt');
@@ -458,32 +541,31 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookie
 
     // 2) Saída: yt-dlp usa template. Geramos base e esperamos ".mp3"
     const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
-    const outTemplate = `${base}.%(ext)s`;
+    const args = buildYtDlpArgs({
+      safeVideoUrl,
+      outputMp3Path,
+      cookieFilePath,
+      proxyUrl
+    });
 
-    const args = [
-      '--no-playlist',
-      '--no-warnings',
-      '--no-progress',
-      '-f',
-      'bestaudio/best',
-      '-x',
-      '--audio-format',
-      'mp3',
-      '--audio-quality',
-      '0',
-      '--ffmpeg-location',
-      ffmpegPath,
-      '-o',
-      outTemplate,
-      '--cookies',
-      cookieFilePath
-    ];
+    logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath, proxyUrl });
 
-    if (proxyUrl) {
-      args.push('--proxy', proxyUrl);
+    let stdout;
+    let stderr;
+    try {
+      ({ stdout, stderr } = await runYtDlp(args, { timeoutMs: timeoutMs || 120000, ytdlpPath }));
+    } catch (err) {
+      const combinedText = `${err?.stderr || ''} ${err?.stdout || ''} ${err?.message || ''}`;
+      if (isMissingYoutubeUrlErrorText(combinedText)) {
+        const urlErr = new Error('Falha interna: URL não foi enviada corretamente ao yt-dlp.');
+        urlErr.code = 'YTDLP_MISSING_URL';
+        urlErr.exitCode = err?.exitCode;
+        urlErr.stdout = err?.stdout;
+        urlErr.stderr = err?.stderr;
+        throw urlErr;
+      }
+      throw err;
     }
-
-    const { stdout, stderr } = await runYtDlp(args, { timeoutMs: timeoutMs || 120000, ytdlpPath });
 
     const expected = `${base}.mp3`;
     if (!fs.existsSync(expected)) {
@@ -509,7 +591,10 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookie
 
 module.exports = {
   checkYtDlpAndFfmpegAvailability,
+  buildYtDlpArgs,
+  logYtDlpFallbackStart,
   getExternalToolDiagnostics,
+  assertValidYoutubeUrl,
   maskPath,
   resolveYtDlpPath,
   runYtDlpToMp3,
@@ -517,7 +602,11 @@ module.exports = {
     cookieArrayToNetscape,
     writeYoutubeCookiesNetscape,
     maskProxyUrl,
+    buildYtDlpArgs,
+    logYtDlpFallbackStart,
     runYtDlp,
+    assertValidYoutubeUrl,
+    isMissingYoutubeUrlErrorText,
     resolveYtDlpPath,
     maskPath
   }

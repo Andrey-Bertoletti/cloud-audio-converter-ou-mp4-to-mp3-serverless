@@ -558,6 +558,13 @@ function createApp(options = {}) {
               });
             }
 
+            if (fallbackError?.code === 'YTDLP_MISSING_URL') {
+              return res.status(500).json({
+                error: 'YTDLP_MISSING_URL',
+                message: 'Falha interna: URL não foi enviada corretamente ao yt-dlp.'
+              });
+            }
+
             if (isYoutubeBotChallenge(fallbackError)) {
               return botChallengeResponse(res, YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS);
             }
@@ -631,6 +638,13 @@ function createApp(options = {}) {
         return res.status(500).json({
           error: 'YTDLP_NOT_AVAILABLE',
           message: 'yt-dlp/ffmpeg não está disponível no ambiente do servidor.'
+        });
+      }
+
+      if (error?.code === 'YTDLP_MISSING_URL') {
+        return res.status(500).json({
+          error: 'YTDLP_MISSING_URL',
+          message: 'Falha interna: URL não foi enviada corretamente ao yt-dlp.'
         });
       }
 

@@ -96,3 +96,48 @@ test('POST /api/youtube/convert: fallback yt-dlp falha (não-bot) e não derruba
   }
 });
 
+test('POST /api/youtube/convert: retorna YTDLP_MISSING_URL quando o fallback detecta URL ausente', async () => {
+  const supabaseStub = createSupabaseStub();
+  const ytdlStub = {
+    validateURL: () => true,
+    createProxyAgent: () => ({}),
+    createAgent: () => ({}),
+    getInfo: async () => {
+      throw new Error("Sign in to confirm you're not a bot");
+    },
+    downloadFromInfo: () => {
+      throw new Error('downloadFromInfo should not be called');
+    }
+  };
+
+  const app = createApp({
+    ytdl: ytdlStub,
+    supabaseAdmin: supabaseStub,
+    disableAuth: true,
+    runYtDlpToMp3: async () => {
+      const err = new Error('Falha interna: URL não foi enviada corretamente ao yt-dlp.');
+      err.code = 'YTDLP_MISSING_URL';
+      throw err;
+    }
+  });
+
+  const server = await startServer(app);
+  try {
+    const port = server.address().port;
+    const response = await fetch(`http://127.0.0.1:${port}/api/youtube/convert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ youtubeUrl: 'https://youtu.be/KlKKYMQOXr4' })
+    });
+
+    assert.equal(response.status, 500);
+    const json = await response.json();
+    assert.deepEqual(json, {
+      error: 'YTDLP_MISSING_URL',
+      message: 'Falha interna: URL não foi enviada corretamente ao yt-dlp.'
+    });
+  } finally {
+    await stopServer(server);
+  }
+});
+

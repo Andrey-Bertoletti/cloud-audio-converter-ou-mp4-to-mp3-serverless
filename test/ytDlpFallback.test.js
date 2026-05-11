@@ -6,6 +6,28 @@ const path = require('node:path');
 
 const { _private } = require('../server/youtube/ytDlpFallback');
 
+function captureConsole() {
+  const calls = [];
+  const original = {
+    log: console.log,
+    warn: console.warn,
+    error: console.error
+  };
+
+  console.log = (...args) => calls.push(['log', ...args]);
+  console.warn = (...args) => calls.push(['warn', ...args]);
+  console.error = (...args) => calls.push(['error', ...args]);
+
+  return {
+    calls,
+    restore: () => {
+      console.log = original.log;
+      console.warn = original.warn;
+      console.error = original.error;
+    }
+  };
+}
+
 test('ytDlpFallback: runYtDlp não vaza proxy nem args no erro', async () => {
   const proxyUrl = 'http://user:pass@proxy.example.com:8080';
 
@@ -29,6 +51,68 @@ test('ytDlpFallback: runYtDlp não vaza proxy nem args no erro', async () => {
     assert.ok(!combined.includes('spawnargs'));
     assert.ok(!combined.includes('cmd'));
   }
+});
+
+test('ytDlpFallback: monta args planos com URL, cookies e proxy', async () => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-args-'));
+  const cookieFilePath = path.join(tempDir, 'cookies.txt');
+  const outputPath = path.join(tempDir, 'out.mp3');
+  const proxyUrl = 'http://127.0.0.1:8080';
+
+  try {
+    const args = _private.buildYtDlpArgs({
+      safeVideoUrl: 'https://youtu.be/KlKKYMQOXr4',
+      outputMp3Path: outputPath,
+      cookieFilePath,
+      proxyUrl
+    });
+
+    assert.ok(Array.isArray(args));
+    assert.ok(args.every((arg) => typeof arg === 'string'));
+    assert.equal(args[0], 'https://youtu.be/KlKKYMQOXr4');
+    assert.ok(args.includes('--cookies'));
+    assert.ok(args.includes('--proxy'));
+    assert.equal(args[args.indexOf('--cookies') + 1], cookieFilePath);
+    assert.equal(args[args.indexOf('--proxy') + 1], proxyUrl);
+    assert.ok(!args.some(Array.isArray));
+
+    const consoleCapture = captureConsole();
+    try {
+      _private.logYtDlpFallbackStart({
+        safeVideoUrl: 'https://youtu.be/KlKKYMQOXr4',
+        cookieFilePath,
+        proxyUrl
+      });
+
+      const output = JSON.stringify(consoleCapture.calls);
+      assert.ok(output.includes('[YouTube] Iniciando yt-dlp fallback'));
+      assert.ok(output.includes('hasUrl'));
+      assert.ok(output.includes('urlHost'));
+      assert.ok(!output.includes(proxyUrl));
+      assert.ok(!output.includes('SID=abc'));
+      assert.ok(!output.includes('https://youtu.be/KlKKYMQOXr4'));
+    } finally {
+      consoleCapture.restore();
+    }
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('ytDlpFallback: rejeita args inválidos antes de chamar spawn', async () => {
+  assert.throws(() => _private.runYtDlp([], { ytdlpPath: '__definitely_not_a_real_yt_dlp_binary__' }), {
+    code: 'YTDLP_INVALID_ARGS'
+  });
+
+  assert.throws(() => _private.runYtDlp(['ok', ['nested']], { ytdlpPath: '__definitely_not_a_real_yt_dlp_binary__' }), {
+    code: 'YTDLP_INVALID_ARGS'
+  });
+});
+
+test('ytDlpFallback: rejeita URL ausente antes de chamar spawn', async () => {
+  assert.throws(() => _private.assertValidYoutubeUrl(''), { code: 'YTDLP_MISSING_URL' });
+
+  assert.throws(() => _private.assertValidYoutubeUrl('https://example.com/video'), { code: 'YTDLP_INVALID_URL' });
 });
 
 test('ytDlpFallback: writeYoutubeCookiesNetscape gera linhas válidas e preserva #HttpOnly_', async () => {
