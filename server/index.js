@@ -5,7 +5,12 @@ const cron = require('node-cron');
 const { createApp } = require('./app');
 const { supabaseAdmin } = require('./config/supabaseAdmin');
 const { safeLog } = require('./utils/safeLog');
-const { checkYtDlpAndFfmpegAvailability } = require('./youtube/ytDlpFallback');
+const {
+  checkYtDlpAndFfmpegAvailability,
+  getExternalToolDiagnostics,
+  resolveYtDlpPath,
+  maskPath
+} = require('./youtube/ytDlpFallback');
 
 const app = createApp();
 
@@ -26,6 +31,9 @@ function getYtDlpFallbackConfig() {
 async function logMediaToolingHealth() {
   const status = await checkYtDlpAndFfmpegAvailability();
   const fallbackCfg = getYtDlpFallbackConfig();
+  const diagnostics = await getExternalToolDiagnostics();
+
+  safeLog.info('[Backend] Ferramentas externas', diagnostics);
 
   if (status.ok) {
     safeLog('log', `[Backend] yt-dlp disponível: ${status.ytDlpVersion}`);
@@ -34,24 +42,19 @@ async function logMediaToolingHealth() {
   }
 
   const meta = {
+    ytDlpPath: maskPath(resolveYtDlpPath()),
+    ytDlpAvailable: Boolean(status.ytDlpVersion),
     ytDlpVersion: status.ytDlpVersion || null,
+    ffmpegAvailable: Boolean(status.ffmpegVersion),
     ffmpegVersion: status.ffmpegVersion || null
   };
 
   if (fallbackCfg.enabled && !status.ytDlpVersion) {
-    if (fallbackCfg.required) {
-      safeLog(
-        'error',
-        '[Backend] ENABLE_YTDLP_FALLBACK=required, mas yt-dlp não foi encontrado. Abortando startup.',
-        meta
-      );
-      const err = new Error('yt-dlp is required but not available');
-      err.code = 'YTDLP_NOT_AVAILABLE';
-      throw err;
-    }
-
-    safeLog('warn', '[Backend] ENABLE_YTDLP_FALLBACK=true, mas yt-dlp não foi encontrado. O fallback ficará inoperante.', meta);
-    return { status, fallbackCfg, shouldAbortStartup: false };
+    safeLog.error(
+      '[Backend] ENABLE_YTDLP_FALLBACK=true, mas yt-dlp não foi encontrado. Corrija YTDLP_PATH ou instale yt-dlp.',
+      meta
+    );
+    process.exit(1);
   }
 
   safeLog('warn', '[Backend] yt-dlp/ffmpeg não estão disponíveis. O fallback pode falhar.', meta);

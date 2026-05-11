@@ -55,6 +55,29 @@ npm run start
 - Configure variáveis de ambiente da API no provedor.
 - Aponte `apiBaseUrl` do Angular para a URL pública da API.
 
+### Render
+
+Se o deploy usar Render sem Dockerfile, o binário do `yt-dlp` precisa ser baixado explicitamente no build. Use esta sequência como base:
+
+```bash
+npm install
+npm run build
+mkdir -p .bin
+curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o .bin/yt-dlp
+chmod +x .bin/yt-dlp
+```
+
+Depois configure no Render:
+
+- `ENABLE_YTDLP_FALLBACK=true`
+- `YTDLP_PATH=/opt/render/project/src/.bin/yt-dlp`
+
+Importante:
+
+- `ffmpeg-static` não instala `yt-dlp`.
+- Ao remover `youtube-dl-exec`, o binário que vinha em `node_modules/youtube-dl-exec/bin/yt-dlp` também deixa de existir.
+- Por isso o projeto agora instala `yt-dlp` explicitamente no ambiente de deploy.
+
 ## 5) Conversão de links do YouTube (Backend)
 
 O endpoint `POST /api/youtube/convert` baixa o áudio do YouTube e converte para MP3 no servidor.

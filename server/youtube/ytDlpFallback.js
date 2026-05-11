@@ -29,24 +29,58 @@ async function getFirstLine(cmd, args, options = {}) {
   }
 }
 
+function normalizeExecutablePath(input) {
+  return String(input ?? '').trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+}
+
+function resolveYtDlpPath() {
+  const candidates = [process.env.YTDLP_PATH, path.join(process.cwd(), '.bin', 'yt-dlp'), 'yt-dlp'].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const normalized = normalizeExecutablePath(candidate);
+    if (normalized === 'yt-dlp') return normalized;
+
+    try {
+      fs.accessSync(normalized, fs.constants.X_OK);
+      return normalized;
+    } catch {
+      // continua
+    }
+  }
+
+  return normalizeExecutablePath(process.env.YTDLP_PATH) || 'yt-dlp';
+}
+
+function maskPath(input) {
+  const normalized = normalizeExecutablePath(input);
+  if (!normalized) return normalized;
+  if (normalized === 'yt-dlp') return normalized;
+
+  try {
+    const relative = path.relative(process.cwd(), normalized);
+    if (relative && !relative.startsWith('..') && !path.isAbsolute(relative)) {
+      return relative;
+    }
+  } catch {
+    // continua
+  }
+
+  return path.basename(normalized);
+}
+
 async function checkYtDlpAndFfmpegAvailability() {
   if (cachedDepsStatus) return cachedDepsStatus;
 
   const status = {
     ok: false,
     ytDlpVersion: '',
-    ytDlpPath: '',
+    ytDlpPath: resolveYtDlpPath(),
     ffmpegVersion: '',
     ffmpegPath: ''
   };
 
   try {
-    const ytDlpCandidates = [];
-    const envYtDlpPath = String(process.env.YTDLP_PATH || '').trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
-    if (envYtDlpPath) ytDlpCandidates.push(envYtDlpPath);
-    ytDlpCandidates.push('./bin/yt-dlp');
-    ytDlpCandidates.push('yt-dlp');
-    ytDlpCandidates.push('/tmp/yt-dlp');
+    const ytDlpCandidates = [status.ytDlpPath, 'yt-dlp'].filter((value, index, array) => Boolean(value) && array.indexOf(value) === index);
 
     for (const candidate of ytDlpCandidates) {
       const versionLine = await getFirstLine(candidate, ['--version']);
@@ -91,6 +125,18 @@ async function ensureYtDlpAndFfmpegAvailable() {
     throw err;
   }
   return status;
+}
+
+async function getExternalToolDiagnostics() {
+  const status = await checkYtDlpAndFfmpegAvailability();
+
+  return {
+    ytDlpPath: maskPath(status.ytDlpPath || resolveYtDlpPath()),
+    ytDlpAvailable: Boolean(status.ytDlpVersion),
+    ytDlpVersion: status.ytDlpVersion || null,
+    ffmpegAvailable: Boolean(status.ffmpegVersion),
+    ffmpegVersion: status.ffmpegVersion || null
+  };
 }
 
 function stripWrappingQuotes(input) {
@@ -334,10 +380,7 @@ function maskProxyUrl(value) {
 }
 
 function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
-  const cmd = String(ytdlpPath || process.env.YTDLP_PATH || 'yt-dlp')
-    .trim()
-    .replace(/^"(.*)"$/, '$1')
-    .replace(/^'(.*)'$/, '$1');
+  const cmd = normalizeExecutablePath(ytdlpPath || resolveYtDlpPath());
 
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
@@ -404,7 +447,7 @@ function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
 
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookieHeader, proxyUrl, timeoutMs }) {
   const status = await ensureYtDlpAndFfmpegAvailable();
-  const ytdlpPath = status.ytDlpPath || process.env.YTDLP_PATH || 'yt-dlp';
+  const ytdlpPath = status.ytDlpPath || resolveYtDlpPath();
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-'));
   const cookieFilePath = path.join(tempDir, 'cookies.txt');
@@ -466,11 +509,16 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookie
 
 module.exports = {
   checkYtDlpAndFfmpegAvailability,
+  getExternalToolDiagnostics,
+  maskPath,
+  resolveYtDlpPath,
   runYtDlpToMp3,
   _private: {
     cookieArrayToNetscape,
     writeYoutubeCookiesNetscape,
     maskProxyUrl,
-    runYtDlp
+    runYtDlp,
+    resolveYtDlpPath,
+    maskPath
   }
 };

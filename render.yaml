@@ -3,7 +3,7 @@ services:
     name: mp4-to-mp3-backend
     env: node
     plan: free
-    buildCommand: npm install && mkdir -p bin && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o ./bin/yt-dlp && chmod +x ./bin/yt-dlp
+    buildCommand: npm install && npm run build && mkdir -p .bin && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o .bin/yt-dlp && chmod +x .bin/yt-dlp
     startCommand: node server/index.js
     envVars:
       - key: NODE_ENV
@@ -13,7 +13,7 @@ services:
       - key: ENABLE_YTDLP_FALLBACK
         value: "true"
       - key: YTDLP_PATH
-        value: ./bin/yt-dlp
+        value: /opt/render/project/src/.bin/yt-dlp
       - key: FRONTEND_URL
         fromContext: frontend_url
       - key: SUPABASE_URL
