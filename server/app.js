@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 
 const { safeLog } = require('./utils/safeLog');
-const { normalizeYoutubeCookie } = require('./utils/normalizeYoutubeCookie');
+const { normalizeYoutubeCookie, assertValidCookieHeader } = require('./utils/normalizeYoutubeCookie');
 const { runYtDlpToMp3 } = require('./youtube/ytDlpFallback');
 
 const YT_HEADERS_TV = {
@@ -155,6 +155,14 @@ function cookieHeaderToCookieArray(cookieHeader) {
     .filter(Boolean);
 }
 
+function countCookiePairs(cookieHeader) {
+  if (!cookieHeader) return 0;
+  return cookieHeader
+    .split(';')
+    .map((x) => x.trim())
+    .filter(Boolean).length;
+}
+
 function readYoutubeCookieEnvInput() {
   return (
     process.env.YOUTUBE_COOKIE ||
@@ -168,6 +176,15 @@ function readYoutubeCookieEnvInput() {
 
 function readYoutubeProxyUrl() {
   return process.env.YOUTUBE_PROXY_URL || process.env.YOUTUBE_PROXY_URI || process.env.YOUTUBE_PROXY_URL;
+}
+
+function isYtDlpFallbackEnabled() {
+  const raw = String(process.env.ENABLE_YTDLP_FALLBACK ?? '')
+    .trim()
+    .toLowerCase();
+  if (!raw) return true;
+  if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+  return true;
 }
 
 function buildYtdlOptions(agent, profile, cookieHeader) {
@@ -187,12 +204,18 @@ function buildYtdlOptions(agent, profile, cookieHeader) {
   // Garantia extra: mesmo se a lib não carregar cookies no jar (config incorreta),
   // ainda tentamos passar o header normalizado (sem logar valor).
   if (cookieHeader) {
+    assertValidCookieHeader(cookieHeader);
     base.requestOptions.headers = Object.assign({}, base.requestOptions.headers, {
       Cookie: cookieHeader
     });
   }
 
   return base;
+}
+
+function isInvalidCookieHeaderError(error) {
+  const text = [error?.name, error?.message, error?.code, String(error)].filter(Boolean).join(' ');
+  return /invalid cookie header|UND_ERR_INVALID_ARG|Invalid normalized YouTube cookie/i.test(text);
 }
 
 function wait(ms) {
@@ -223,6 +246,16 @@ async function getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeade
         return await ytdl.getInfo(youtubeUrl, buildYtdlOptions(agent, profile, cookieHeader));
       } catch (err) {
         lastError = err;
+
+        if (isInvalidCookieHeaderError(err)) {
+          safeLog.error('[YouTube] Cookie inválido para undici/ytdl-core (falha não-temporária).', {
+            name: err?.name,
+            code: err?.code,
+            message: err?.message
+          });
+          throw err;
+        }
+
         safeLog('error', `[YouTube] Falha no perfil ${profile} (tentativa ${attempt}):`, err);
 
         if (isYouTubeBotOrRateLimitError(err)) {
@@ -430,6 +463,12 @@ function createApp(options = {}) {
       const proxyUrl = readYoutubeProxyUrl();
       const cookiesArray = cookieHeader ? cookieHeaderToCookieArray(cookieHeader) : [];
 
+      safeLog.info('[YouTube] Cookie normalizado', {
+        cookieCount: countCookiePairs(cookieHeader),
+        hasCookie: Boolean(cookieHeader),
+        headerLength: cookieHeader?.length || 0
+      });
+
       // Mantém a mesma sessão/proxy durante a tentativa completa
       const agent = proxyUrl ? ytdl.createProxyAgent({ uri: proxyUrl }, cookiesArray) : ytdl.createAgent(cookiesArray);
 
@@ -444,7 +483,22 @@ function createApp(options = {}) {
         await convertWithYtdlCore({ ytdl, youtubeUrl, info, agent, cookieHeader, tempFilePath });
         safeLog('log', '[YouTube] ytdl-core concluído.');
       } catch (error) {
+        if (isInvalidCookieHeaderError(error)) {
+          return res.status(500).json({
+            error: 'YOUTUBE_COOKIE_INVALID',
+            message: 'O cookie do YouTube está em formato inválido no servidor.'
+          });
+        }
+
         if (isYoutubeBotChallenge(error)) {
+          if (!isYtDlpFallbackEnabled()) {
+            const retryAfterSeconds = Math.max(
+              1,
+              Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
+            );
+            return botChallengeResponse(res, retryAfterSeconds);
+          }
+
           safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
 
           try {
@@ -506,6 +560,13 @@ function createApp(options = {}) {
       });
     } catch (error) {
       safeLog('error', '[YouTube] Erro Interno:', error);
+
+      if (isInvalidCookieHeaderError(error)) {
+        return res.status(500).json({
+          error: 'YOUTUBE_COOKIE_INVALID',
+          message: 'O cookie do YouTube está em formato inválido no servidor.'
+        });
+      }
 
       const ytdlpOutput = `${error?.stderr || ''} ${error?.stdout || ''}`.toLowerCase();
       const ytdlpBlocked =

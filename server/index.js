@@ -9,18 +9,53 @@ const { checkYtDlpAndFfmpegAvailability } = require('./youtube/ytDlpFallback');
 
 const app = createApp();
 
+function getYtDlpFallbackConfig() {
+  const raw = String(process.env.ENABLE_YTDLP_FALLBACK ?? '')
+    .trim()
+    .toLowerCase();
+
+  if (!raw) return { enabled: true, required: false };
+
+  if (['0', 'false', 'no', 'off'].includes(raw)) return { enabled: false, required: false };
+  if (['required', 'strict', 'force', 'mandatory'].includes(raw)) return { enabled: true, required: true };
+  if (['1', 'true', 'yes', 'on'].includes(raw)) return { enabled: true, required: false };
+
+  return { enabled: true, required: false };
+}
+
 async function logMediaToolingHealth() {
   const status = await checkYtDlpAndFfmpegAvailability();
+  const fallbackCfg = getYtDlpFallbackConfig();
+
   if (status.ok) {
     safeLog('log', `[Backend] yt-dlp disponível: ${status.ytDlpVersion}`);
     safeLog('log', `[Backend] ffmpeg disponível: ${status.ffmpegVersion}`);
-    return;
+    return { status, fallbackCfg, shouldAbortStartup: false };
   }
 
-  safeLog('warn', '[Backend] yt-dlp/ffmpeg não estão disponíveis. O fallback pode falhar.', {
+  const meta = {
     ytDlpVersion: status.ytDlpVersion || null,
     ffmpegVersion: status.ffmpegVersion || null
-  });
+  };
+
+  if (fallbackCfg.enabled && !status.ytDlpVersion) {
+    if (fallbackCfg.required) {
+      safeLog(
+        'error',
+        '[Backend] ENABLE_YTDLP_FALLBACK=required, mas yt-dlp não foi encontrado. Abortando startup.',
+        meta
+      );
+      const err = new Error('yt-dlp is required but not available');
+      err.code = 'YTDLP_NOT_AVAILABLE';
+      throw err;
+    }
+
+    safeLog('warn', '[Backend] ENABLE_YTDLP_FALLBACK=true, mas yt-dlp não foi encontrado. O fallback ficará inoperante.', meta);
+    return { status, fallbackCfg, shouldAbortStartup: false };
+  }
+
+  safeLog('warn', '[Backend] yt-dlp/ffmpeg não estão disponíveis. O fallback pode falhar.', meta);
+  return { status, fallbackCfg, shouldAbortStartup: false };
 }
 
 async function performCleanup() {
@@ -68,18 +103,22 @@ if (process.env.DISABLE_CLEANUP_CRON !== '1') {
 if (require.main === module) {
   const port = Number(process.env.PORT || 3000);
 
-  app.listen(port, () => {
-    const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
-    safeLog('log', `[Backend] Rodando em modo: ${mode}`);
-    safeLog('log', `[Backend] API disponível na porta: ${port}`);
-    logMediaToolingHealth().catch((err) => {
-      safeLog('warn', '[Backend] Falha ao validar yt-dlp/ffmpeg no startup.', {
-        name: err?.name,
-        code: err?.code,
-        message: err?.message
-      });
+  (async () => {
+    await logMediaToolingHealth();
+
+    app.listen(port, () => {
+      const mode = process.env.NODE_ENV === 'production' ? 'PRODUÇÃO (Nuvem)' : 'DESENVOLVIMENTO (Local)';
+      safeLog('log', `[Backend] Rodando em modo: ${mode}`);
+      safeLog('log', `[Backend] API disponível na porta: ${port}`);
     });
+  })().catch((err) => {
+    safeLog('error', '[Backend] Falha no startup.', {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message
+    });
+    process.exit(1);
   });
 }
 
-module.exports = { app, performCleanup };
+module.exports = { app, performCleanup, logMediaToolingHealth, getYtDlpFallbackConfig };

@@ -31,7 +31,9 @@ async function checkYtDlpAndFfmpegAvailability() {
   const status = {
     ok: false,
     ytDlpVersion: '',
-    ffmpegVersion: ''
+    ytDlpPath: '',
+    ffmpegVersion: '',
+    ffmpegPath: ''
   };
 
   try {
@@ -39,13 +41,17 @@ async function checkYtDlpAndFfmpegAvailability() {
     const ytDlpBin = youtubedl?.constants?.YOUTUBE_DL_PATH;
 
     const ytDlpCandidates = [];
+    const envYtDlpPath = String(process.env.YTDLP_PATH || '').trim().replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    if (envYtDlpPath) ytDlpCandidates.push(envYtDlpPath);
     if (ytDlpBin && fs.existsSync(ytDlpBin)) ytDlpCandidates.push(ytDlpBin);
     ytDlpCandidates.push('yt-dlp');
+    ytDlpCandidates.push('/tmp/yt-dlp');
 
     for (const candidate of ytDlpCandidates) {
       const versionLine = await getFirstLine(candidate, ['--version']);
       if (versionLine) {
         status.ytDlpVersion = versionLine;
+        status.ytDlpPath = candidate;
         break;
       }
     }
@@ -58,6 +64,7 @@ async function checkYtDlpAndFfmpegAvailability() {
       const versionLine = await getFirstLine(candidate, ['-version']);
       if (versionLine) {
         status.ffmpegVersion = versionLine;
+        status.ffmpegPath = candidate;
         break;
       }
     }
@@ -144,9 +151,10 @@ function collectOutput(stream, maxBytes = 64 * 1024) {
 }
 
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, cookieHeader, proxyUrl }) {
-  await ensureYtDlpAndFfmpegAvailable();
+  const status = await ensureYtDlpAndFfmpegAvailable();
 
-  const youtubedl = require('youtube-dl-exec');
+  const ytdlExec = require('youtube-dl-exec');
+  const youtubedl = status.ytDlpPath ? ytdlExec.create(status.ytDlpPath) : ytdlExec;
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-'));
   const cookieFilePath = path.join(tempDir, 'cookies.txt');
