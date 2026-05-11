@@ -8,7 +8,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-const { safeLog } = require('./utils/safeLog');
+const { safeLog, redactString } = require('./utils/safeLog');
 const { normalizeYoutubeCookie, assertValidCookieHeader } = require('./utils/normalizeYoutubeCookie');
 const { runYtDlpToMp3 } = require('./youtube/ytDlpFallback');
 
@@ -115,13 +115,26 @@ function isYouTubeBotOrRateLimitError(err) {
 }
 
 function isYoutubeBotChallenge(error) {
-  const rawText = [error?.message, error?.code, error?.stack, String(error)].filter(Boolean).join(' ');
+  const rawText = [
+    error?.message,
+    error?.code,
+    error?.stderr,
+    error?.stdout,
+    error?.stack,
+    error?.cause?.message,
+    error?.cause?.code,
+    error?.cause?.stderr,
+    error?.cause?.stdout,
+    String(error)
+  ]
+    .filter(Boolean)
+    .join(' ');
   const text = rawText
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[\u0300-\u036f]/g, '');
 
-  return /yt_bot_challenge|youtube_bot_challenge|sign in to confirm|faca login para confirmar|too many requests|429/i.test(
+  return /yt_bot_challenge|youtube_bot_challenge|sign in to confirm|confirm youre not a bot|faca login para confirmar|nao e um bot|too many requests|http error 429|\b429\b/i.test(
     text
   );
 }
@@ -222,6 +235,31 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function sanitizeLogText(value, maxLen = 900) {
+  if (!value) return '';
+  const redacted = redactString(String(value));
+  return redacted
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function summarizeYtDlpStderr(stderr) {
+  if (!stderr) return '';
+  const lines = String(stderr)
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const important = lines.filter((l) =>
+    /error:|\[youtube\]|sign in to confirm|confirm you're not a bot|not a bot|too many requests|\b429\b/i.test(l)
+  );
+
+  const picked = (important.length ? important : lines).slice(-8).join(' | ');
+  return sanitizeLogText(picked);
+}
+
 async function getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeader, state }) {
   const cooldownSeconds = remainingSeconds(state.ytBotChallengeBlockedUntilMs);
   if (cooldownSeconds > 0) {
@@ -319,7 +357,7 @@ function botChallengeResponse(res, retryAfterSeconds = YT_BOT_CHALLENGE_RETRY_AF
   res.setHeader('Retry-After', String(retryAfterSeconds));
   return res.status(429).json({
     error: 'YOUTUBE_BOT_CHALLENGE',
-    message: 'YouTube solicitou verificação anti-bot para este servidor/proxy.',
+    message: 'YouTube recusou a sessão/cookie ou bloqueou o IP/proxy usado pelo servidor.',
     retryAfterSeconds
   });
 }
@@ -459,7 +497,8 @@ function createApp(options = {}) {
 
       safeLog('log', `[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-      const cookieHeader = normalizeYoutubeCookie(readYoutubeCookieEnvInput());
+      const rawCookieInput = readYoutubeCookieEnvInput();
+      const cookieHeader = normalizeYoutubeCookie(rawCookieInput);
       const proxyUrl = readYoutubeProxyUrl();
       const cookiesArray = cookieHeader ? cookieHeaderToCookieArray(cookieHeader) : [];
 
@@ -502,12 +541,14 @@ function createApp(options = {}) {
           safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
 
           try {
-            await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookieHeader, proxyUrl });
+            await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, rawCookieInput, cookieHeader, proxyUrl });
             safeLog('log', '[YouTube] yt-dlp fallback concluído.');
           } catch (fallbackError) {
             safeLog.warn('[YouTube] fallback yt-dlp também falhou.', {
               code: fallbackError?.code,
-              message: fallbackError?.message
+              exitCode: fallbackError?.exitCode,
+              message: sanitizeLogText(fallbackError?.message),
+              stderr: summarizeYtDlpStderr(fallbackError?.stderr)
             });
 
             if (fallbackError?.code === 'YTDLP_NOT_AVAILABLE') {
@@ -521,7 +562,10 @@ function createApp(options = {}) {
               return botChallengeResponse(res, YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS);
             }
 
-            throw fallbackError;
+            return res.status(500).json({
+              error: 'YTDLP_FALLBACK_FAILED',
+              message: 'O fallback yt-dlp falhou durante a conversão.'
+            });
           }
         }
 

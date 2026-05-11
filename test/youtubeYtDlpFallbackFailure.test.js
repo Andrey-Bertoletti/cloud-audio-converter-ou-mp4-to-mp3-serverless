@@ -1,0 +1,98 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { createApp } = require('../server/app');
+
+function createSupabaseStub() {
+  return {
+    from: () => ({
+      insert: async () => ({ error: null }),
+      select: () => ({
+        eq: () => ({
+          order: () => ({
+            range: async () => ({ data: [], error: null, count: 0 })
+          })
+        })
+      }),
+      delete: () => ({
+        in: async () => ({ error: null })
+      })
+    }),
+    storage: {
+      from: () => ({
+        upload: async () => ({ error: null }),
+        getPublicUrl: () => ({ data: { publicUrl: 'http://example.com/file.mp3' } }),
+        remove: async () => ({ error: null })
+      })
+    }
+  };
+}
+
+async function startServer(app) {
+  return await new Promise((resolve) => {
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
+  });
+}
+
+async function stopServer(server) {
+  await new Promise((resolve) => server.close(() => resolve()));
+}
+
+test('POST /api/youtube/convert: fallback yt-dlp falha (não-bot) e não derruba o servidor', async () => {
+  const supabaseStub = createSupabaseStub();
+
+  const ytdlStub = {
+    validateURL: () => true,
+    createProxyAgent: () => ({}),
+    createAgent: () => ({}),
+    getInfo: async () => {
+      throw new Error("Sign in to confirm you're not a bot");
+    },
+    downloadFromInfo: () => {
+      throw new Error('downloadFromInfo should not be called');
+    }
+  };
+
+  let fallbackCalls = 0;
+  const runYtDlpToMp3Stub = async () => {
+    fallbackCalls += 1;
+    const err = new Error('yt-dlp failed');
+    err.code = 'YTDLP_FAILED';
+    err.stderr = 'ERROR: some generic failure';
+    throw err;
+  };
+
+  const app = createApp({
+    ytdl: ytdlStub,
+    supabaseAdmin: supabaseStub,
+    disableAuth: true,
+    runYtDlpToMp3: runYtDlpToMp3Stub
+  });
+
+  const server = await startServer(app);
+  try {
+    const port = server.address().port;
+    const response = await fetch(`http://127.0.0.1:${port}/api/youtube/convert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ youtubeUrl: 'https://youtu.be/KlKKYMQOXr4' })
+    });
+
+    assert.equal(response.status, 500);
+    const json = await response.json();
+    assert.deepEqual(json, {
+      error: 'YTDLP_FALLBACK_FAILED',
+      message: 'O fallback yt-dlp falhou durante a conversão.'
+    });
+
+    assert.equal(fallbackCalls, 1);
+
+    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(health.status, 200);
+    const healthJson = await health.json();
+    assert.equal(healthJson.status, 'ok');
+  } finally {
+    await stopServer(server);
+  }
+});
+

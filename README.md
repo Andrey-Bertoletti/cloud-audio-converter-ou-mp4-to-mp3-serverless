@@ -68,4 +68,6 @@ Segurança: se cookies/proxy já foram expostos em logs, prints ou Git, trate co
 
 Observação importante: a mensagem **"Sign in to confirm you’re not a bot"** é um bloqueio do próprio YouTube (muito comum em IPs de datacenter). Mesmo com cookies/proxy, não é possível garantir 100% de sucesso em produção — quando ocorrer, o backend retorna `429` com `Retry-After`.
 
-Fallback técnico: quando o `@distube/ytdl-core` falha com bloqueio/429, o backend tenta um fallback com `yt-dlp` (via `youtube-dl-exec`). Em provedores onde Python não está disponível, pode ser necessário instalar `python3` ou ajustar a configuração do ambiente para suportar a execução do `yt-dlp`.
+Fallback técnico: quando o `@distube/ytdl-core` falha com bloqueio/429, o backend tenta um fallback com `yt-dlp` (executado via `child_process.spawn`). Para funcionar, o binário precisa estar disponível no servidor e apontado por `YTDLP_PATH`.
+
+Segurança (reforço): se o proxy/cookies vazaram em logs de produção, **rotacione imediatamente**. Nunca cole logs contendo `YOUTUBE_PROXY_URL` real nem valores de cookies.

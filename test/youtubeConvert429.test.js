@@ -69,11 +69,10 @@ test('POST /api/youtube/convert returns 429 on bot challenge', async () => {
 
     assert.deepEqual(json, {
       error: 'YOUTUBE_BOT_CHALLENGE',
-      message: 'YouTube solicitou verificação anti-bot para este servidor/proxy.',
+      message: 'YouTube recusou a sessão/cookie ou bloqueou o IP/proxy usado pelo servidor.',
       retryAfterSeconds: 300
     });
   } finally {
     await new Promise((resolve) => server.close(() => resolve()));
   }
 });
-
