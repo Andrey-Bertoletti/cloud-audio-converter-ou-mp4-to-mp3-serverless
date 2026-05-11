@@ -1,3 +1,4 @@
+process.env.YTDL_NO_UPDATE = process.env.YTDL_NO_UPDATE || '1';
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
@@ -46,8 +47,10 @@ function isRateLimitError(err) {
 
 function isBotChallengeError(err) {
   const text = [
+    String(err?.name || ''),
     String(err?.message || ''),
     String(err?.stack || ''),
+    String(err?.cause?.name || ''),
     String(err?.cause?.message || ''),
     String(err?.cause?.stack || '')
   ]
@@ -55,9 +58,13 @@ function isBotChallengeError(err) {
     .toLowerCase();
 
   return (
-    text.includes('sign in to confirm you\'re not a bot') ||
+    text.includes('sign in to confirm') ||
+    text.includes('confirm you\'re not a bot') ||
     text.includes('confirm you are not a bot') ||
-    text.includes('unrecoverableerror')
+    text.includes('not a bot') ||
+    text.includes('unrecoverableerror') ||
+    text.includes('playerror') ||
+    text.includes('bot')
   );
 }
 
