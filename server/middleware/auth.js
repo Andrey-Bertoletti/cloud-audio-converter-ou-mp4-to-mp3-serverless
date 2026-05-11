@@ -8,11 +8,14 @@ const supabase = createClient(
 const authMiddleware = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Token não fornecido.' });
   }
 
   const token = authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Token inválido.' });
+  }
 
   try {
     const { data: { user }, error } = await supabase.auth.getUser(token);

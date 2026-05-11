@@ -1,11 +1,11 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
+import { Component, OnDestroy, OnInit, ChangeDetectionStrategy, ChangeDetectorRef } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import { supabase } from './supabase.client';
 import { environment } from '../environments/environment';
-import { User } from '@supabase/supabase-js';
+import { AuthChangeEvent, Session, User } from '@supabase/supabase-js';
 
 type Conversao = {
   id: number;
@@ -65,10 +65,18 @@ export class AppComponent implements OnInit {
 
   private ffmpeg = new FFmpeg();
   private ffmpegLoaded = false;
+  private authUnsubscribe?: () => void;
 
   constructor(public cdr: ChangeDetectorRef) {}
 
   async ngOnInit(): Promise<void> {
+    this.isDarkMode = document.documentElement.classList.contains('dark');
+
+    const resetView = new URLSearchParams(window.location.search).get('view');
+    if (resetView === 'reset-password') {
+      this.currentView = 'reset-password';
+    }
+
     const hash = window.location.hash;
     if (hash && hash.includes('type=recovery')) {
       this.currentView = 'reset-password';
@@ -83,22 +91,16 @@ export class AppComponent implements OnInit {
       this.inicializarFfmpeg(); 
     }
 
-    supabase.auth.onAuthStateChange(async (event, session) => {
-      this.user = session?.user ?? null;
-      
-      if (event === 'PASSWORD_RECOVERY') {
-        this.currentView = 'reset-password';
-      }
-
-      if (this.user) {
-        await this.carregarConversoes();
-        this.inicializarFfmpeg();
-      } else {
-        this.conversoes = [];
-        this.currentView = 'converter';
-      }
-      this.cdr.markForCheck();
+    const { data } = supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
+      void this.handleAuthStateChange(event, session);
     });
+    this.authUnsubscribe = () => data.subscription.unsubscribe();
+  }
+
+  ngOnDestroy(): void {
+    this.authUnsubscribe?.();
+    this.authUnsubscribe = undefined;
+    this.cleanupOutputUrl();
   }
 
   async signIn(): Promise<void> {
@@ -185,6 +187,7 @@ export class AppComponent implements OnInit {
 
   async signOut(): Promise<void> {
     await supabase.auth.signOut();
+    this.cleanupOutputUrl();
     this.cdr.markForCheck();
   }
 
@@ -330,8 +333,12 @@ export class AppComponent implements OnInit {
   async converterArquivo(): Promise<void> {
     if (!this.selectedFile || this.isConverting) return;
 
-    let watchdog: any;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let inputName = '';
+    let outputName = '';
+
     try {
+      this.errorMessage = '';
       this.isConverting = true;
       this.progress = 0;
       this.cdr.markForCheck();
@@ -346,15 +353,10 @@ export class AppComponent implements OnInit {
       }, 45000);
 
       await this.inicializarFfmpeg();
-      
-      this.ffmpeg.on('progress', ({ progress }) => {
-        this.progress = Math.round(progress * 100);
-        this.cdr.markForCheck();
-      });
 
-      const inputName = this.selectedFile.name;
+      inputName = this.selectedFile.name;
       const baseName = inputName.replace(/\.mp4$/i, '');
-      const outputName = `${baseName}.mp3`;
+      outputName = `${baseName}.mp3`;
 
       const fileData = await fetchFile(this.selectedFile);
       await this.ffmpeg.writeFile(inputName, fileData);
@@ -364,15 +366,13 @@ export class AppComponent implements OnInit {
 
       const mp3Data = await this.ffmpeg.readFile(outputName);
       const mp3Blob = new Blob([mp3Data as Uint8Array], { type: 'audio/mpeg' });
-      
+
+      this.cleanupOutputUrl();
       this.outputUrl = URL.createObjectURL(mp3Blob);
       this.outputName = outputName;
       this.progress = 100;
 
-      // Salva no histórico em background
-      this.uploadParaStorage(outputName, mp3Blob)
-        .then(path => this.salvarLogConversao(outputName, path))
-        .then(() => this.carregarConversoes());
+      void this.persistirConversao(outputName, mp3Blob);
 
       this.showToast('Conversão concluída com sucesso!', 'success');
     } catch (error: any) {
@@ -380,16 +380,21 @@ export class AppComponent implements OnInit {
       this.showToast('Falha na conversão: ' + (error.message || 'Erro interno'), 'error');
       this.ffmpegLoaded = false; // Força recarregamento na próxima
     } finally {
-      clearTimeout(watchdog);
+      if (watchdog) {
+        clearTimeout(watchdog);
+      }
+      await this.cleanupFfmpegFiles(inputName, outputName);
       this.isConverting = false;
       this.cdr.markForCheck();
     }
   }
 
   async converterYouTube(): Promise<void> {
-    if (!this.youtubeUrl || this.isYtConverting) return;
+    const normalizedUrl = this.youtubeUrl.trim();
+    if (!normalizedUrl || this.isYtConverting) return;
     
     try {
+      this.errorMessage = '';
       this.isYtConverting = true;
       this.ytStatus = 'Extraindo áudio na nuvem...';
       this.cdr.markForCheck();
@@ -401,16 +406,17 @@ export class AppComponent implements OnInit {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session?.access_token}`
         },
-        body: JSON.stringify({ youtubeUrl: this.youtubeUrl })
+        body: JSON.stringify({ youtubeUrl: normalizedUrl })
       });
 
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Erro no servidor');
 
+      this.cleanupOutputUrl();
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
       this.showToast('Vídeo do YouTube convertido!', 'success');
-      this.carregarConversoes();
+      await this.carregarConversoes();
     } catch (error: any) {
       this.showToast(error.message || 'Erro ao converter YouTube', 'error');
     } finally {
@@ -429,10 +435,14 @@ export class AppComponent implements OnInit {
   }
 
   private aplicarArquivo(file?: File): void {
-    if (file && file.type === 'video/mp4') {
+    const fileName = file?.name.toLowerCase() || '';
+    const isMp4 = file?.type === 'video/mp4' || fileName.endsWith('.mp4');
+
+    if (file && isMp4) {
       this.selectedFile = file;
-      this.outputUrl = null;
+      this.cleanupOutputUrl();
       this.progress = 0;
+      this.errorMessage = '';
     } else {
       this.errorMessage = 'Arquivo inválido.';
     }
@@ -447,6 +457,11 @@ export class AppComponent implements OnInit {
       coreURL: `${baseURL}/ffmpeg-core.js`,
       wasmURL: `${baseURL}/ffmpeg-core.wasm`,
       workerURL: `${baseURL}/ffmpeg-core.worker.js`
+    });
+
+    this.ffmpeg.on('progress', ({ progress }) => {
+      this.progress = Math.round(progress * 100);
+      this.cdr.markForCheck();
     });
     
     this.ffmpegLoaded = true;
@@ -473,7 +488,7 @@ export class AppComponent implements OnInit {
     this.currentTab = tab;
     this.youtubeUrl = '';
     this.selectedFile = null;
-    this.outputUrl = null;
+    this.cleanupOutputUrl();
     this.progress = 0;
     this.errorMessage = '';
     this.successMessage = '';
@@ -490,8 +505,8 @@ export class AppComponent implements OnInit {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      this.conversoes = result.data;
-      this.totalPages = result.totalPages;
+      this.conversoes = Array.isArray(result.data) ? result.data : [];
+      this.totalPages = Math.max(1, Number(result.totalPages) || 1);
       this.cdr.markForCheck();
     } catch (e) {
       this.errorMessage = 'Erro ao carregar histórico.';
@@ -514,5 +529,57 @@ export class AppComponent implements OnInit {
       this.name = this.user.user_metadata?.['display_name'] || '';
     }
     this.cdr.markForCheck();
+  }
+
+  private async handleAuthStateChange(event: AuthChangeEvent, session: Session | null): Promise<void> {
+    this.user = session?.user ?? null;
+
+    if (event === 'PASSWORD_RECOVERY') {
+      this.currentView = 'reset-password';
+    }
+
+    if (this.user) {
+      await this.carregarConversoes();
+      await this.inicializarFfmpeg();
+    } else {
+      this.conversoes = [];
+      this.currentView = 'converter';
+      this.currentPage = 1;
+      this.totalPages = 1;
+      this.selectedFile = null;
+      this.youtubeUrl = '';
+      this.cleanupOutputUrl();
+    }
+
+    this.cdr.markForCheck();
+  }
+
+  private async persistirConversao(fileName: string, mp3Blob: Blob): Promise<void> {
+    try {
+      const path = await this.uploadParaStorage(fileName, mp3Blob);
+      await this.salvarLogConversao(fileName, path);
+      await this.carregarConversoes();
+    } catch (error: any) {
+      this.showToast(error?.message || 'Falha ao salvar no histórico', 'error');
+    }
+  }
+
+  private cleanupOutputUrl(): void {
+    if (this.outputUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(this.outputUrl);
+    }
+    this.outputUrl = null;
+    this.outputName = '';
+  }
+
+  private async cleanupFfmpegFiles(inputName: string, outputName: string): Promise<void> {
+    const files = [inputName, outputName].filter(Boolean);
+    for (const file of files) {
+      try {
+        await this.ffmpeg.deleteFile(file);
+      } catch {
+        // Ignora erros de limpeza para não impactar o fluxo principal.
+      }
+    }
   }
 }

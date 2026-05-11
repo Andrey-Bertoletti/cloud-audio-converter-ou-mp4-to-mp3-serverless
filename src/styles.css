@@ -2,6 +2,94 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --apple-bg: #f5f7fb;
+    --apple-text: #0f172a;
+    --apple-muted: #64748b;
+    --apple-surface: rgba(255, 255, 255, 0.82);
+    --apple-border: rgba(148, 163, 184, 0.24);
+    --apple-primary: #0a84ff;
+    --apple-primary-pressed: #0066cc;
+  }
+
+  .dark {
+    --apple-bg: #020617;
+    --apple-text: #f8fafc;
+    --apple-muted: #94a3b8;
+    --apple-surface: rgba(12, 17, 32, 0.72);
+    --apple-border: rgba(255, 255, 255, 0.09);
+    --apple-primary: #0a84ff;
+    --apple-primary-pressed: #3a9eff;
+  }
+
+  html,
+  body {
+    @apply antialiased;
+    background: var(--apple-bg);
+    color: var(--apple-text);
+  }
+}
+
+@layer components {
+  .apple-surface {
+    background: var(--apple-surface);
+    border: 1px solid var(--apple-border);
+    @apply rounded-[28px] backdrop-blur-2xl shadow-xl;
+  }
+
+  .apple-card {
+    @apply apple-surface p-8 md:p-10;
+  }
+
+  .apple-input {
+    @apply block w-full rounded-2xl px-4 py-3.5 text-sm leading-5 transition-all;
+    background: color-mix(in oklab, var(--apple-surface) 80%, transparent);
+    border: 1px solid var(--apple-border);
+    color: var(--apple-text);
+  }
+
+  .apple-input::placeholder {
+    color: color-mix(in oklab, var(--apple-muted) 85%, transparent);
+  }
+
+  .apple-input:focus {
+    outline: none;
+    border-color: color-mix(in oklab, var(--apple-primary) 45%, var(--apple-border));
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--apple-primary) 18%, transparent);
+  }
+
+  .apple-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3.5 text-sm font-semibold transition-all;
+    @apply focus-visible:outline-none focus-visible:ring-4;
+  }
+
+  .apple-btn-primary {
+    @apply apple-btn text-white shadow-lg;
+    background: var(--apple-primary);
+    box-shadow: 0 12px 28px rgba(10, 132, 255, 0.22);
+  }
+
+  .apple-btn-primary:hover {
+    background: var(--apple-primary-pressed);
+  }
+
+  .apple-btn-secondary {
+    @apply apple-btn;
+    background: color-mix(in oklab, var(--apple-surface) 92%, transparent);
+    border: 1px solid var(--apple-border);
+    color: var(--apple-text);
+  }
+
+  .apple-btn-secondary:hover {
+    background: color-mix(in oklab, var(--apple-surface) 84%, white 16%);
+  }
+
+  .apple-chip {
+    @apply rounded-2xl px-3.5 py-2 text-[11px] font-semibold uppercase tracking-[0.14em] transition-all;
+  }
+}
+
 @layer utilities {
   .animate-in {
     animation-duration: 500ms;

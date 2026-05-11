@@ -13,6 +13,17 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+function safeFileName(input) {
+  const baseName = String(input || '')
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-');
+
+  const clipped = baseName.slice(0, 80);
+  return clipped || `audio-${Date.now()}`;
+}
+
 // Configura o caminho do ffmpeg estático
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -133,8 +144,8 @@ app.post('/api/conversoes', async (req, res) => {
 app.get('/api/conversoes', async (req, res) => {
   try {
     const user_id = req.user.id;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 5;
+    const page = Math.max(1, Number.parseInt(String(req.query.page ?? '1'), 10) || 1);
+    const limit = Math.min(20, Math.max(1, Number.parseInt(String(req.query.limit ?? '5'), 10) || 5));
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
@@ -149,12 +160,12 @@ app.get('/api/conversoes', async (req, res) => {
 
     return res.status(200).json({
       data: data ?? [],
-      total: count,
+      total: count ?? 0,
       page,
-      totalPages: Math.ceil(count / limit)
+      totalPages: Math.max(1, Math.ceil((count ?? 0) / limit))
     });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error?.message || 'Erro interno ao carregar conversões.' });
   }
 });
 
@@ -193,9 +204,9 @@ app.post('/api/youtube/convert', async (req, res) => {
     };
 
     const info = await ytdl.getInfo(youtubeUrl, options);
-    const fileName = `${info.videoDetails.title.replace(/[^\w\s]/gi, '')}.mp3`;
+    const fileName = `${safeFileName(info?.videoDetails?.title)}.mp3`;
     const timestamp = Date.now();
-    console.log(`[YouTube] Título: ${info.videoDetails.title}`);
+    console.log(`[YouTube] Título: ${info?.videoDetails?.title || 'N/A'}`);
     const storagePath = `${user_id}/yt-${timestamp}-${fileName}`;
 
     // 2. Criar caminho temporário para o arquivo convertido
@@ -233,7 +244,7 @@ app.post('/api/youtube/convert', async (req, res) => {
     });
 
     // 4. Ler o arquivo convertido e fazer upload para o Supabase
-    const fileBuffer = fs.readFileSync(tempFilePath);
+    const fileBuffer = await fs.promises.readFile(tempFilePath);
     const { error: uploadError } = await supabaseAdmin.storage
       .from('converted-audio')
       .upload(storagePath, fileBuffer, {
@@ -268,13 +279,17 @@ app.post('/api/youtube/convert', async (req, res) => {
     console.error('[YouTube] Erro Interno:', error);
     return res.status(500).json({ 
       error: 'Erro no servidor durante a conversão',
-      details: error.message,
-      code: error.code
+      details: error?.message || 'Falha inesperada.',
+      code: error?.code
     });
   } finally {
     // Limpar arquivo temporário
     if (tempFilePath && fs.existsSync(tempFilePath)) {
-      fs.unlinkSync(tempFilePath);
+      try {
+        await fs.promises.unlink(tempFilePath);
+      } catch (cleanupError) {
+        console.error('[YouTube] Erro ao limpar arquivo temporário:', cleanupError?.message || cleanupError);
+      }
     }
   }
 });
