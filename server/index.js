@@ -120,6 +120,63 @@ function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function readYouTubeCookiesFromEnv() {
+  const rawJson = process.env.YOUTUBE_COOKIE;
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch (error) {
+      console.error('[YouTube] YOUTUBE_COOKIE inválido (JSON malformado).');
+    }
+  }
+
+  const rawBase64 = process.env.YOUTUBE_COOKIE_BASE64;
+  if (rawBase64) {
+    try {
+      const decoded = Buffer.from(rawBase64, 'base64').toString('utf-8');
+      const parsed = JSON.parse(decoded);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed;
+      }
+    } catch (error) {
+      console.error('[YouTube] YOUTUBE_COOKIE_BASE64 inválido (base64/json).');
+    }
+  }
+
+  return [];
+}
+
+function createYouTubeAgent() {
+  const cookies = readYouTubeCookiesFromEnv();
+  const proxyUri = process.env.YOUTUBE_PROXY_URI || process.env.YOUTUBE_PROXY_URL;
+
+  if (proxyUri) {
+    try {
+      const agent = ytdl.createProxyAgent({ uri: proxyUri }, cookies);
+      console.log(`[YouTube] Agente criado com proxy dedicado (${cookies.length} cookies).`);
+      return agent;
+    } catch (error) {
+      console.error('[YouTube] Falha ao criar agente com proxy:', error?.message || error);
+    }
+  }
+
+  if (cookies.length > 0) {
+    try {
+      const agent = ytdl.createAgent(cookies);
+      console.log('[YouTube] Agente criado com sucesso usando cookies JSON.');
+      return agent;
+    } catch (error) {
+      console.error('[YouTube] Erro ao criar agente com cookies:', error?.message || error);
+    }
+  }
+
+  console.log('[YouTube] Sem proxy/cookies válidos. Usando agente padrão.');
+  return undefined;
+}
+
 async function getYouTubeInfoWithFallback(youtubeUrl, agent) {
   const profiles = ['tv', 'web'];
   let lastError;
@@ -310,16 +367,8 @@ app.post('/api/youtube/convert', async (req, res) => {
 
     console.log(`[YouTube] Iniciando conversão para o usuário ${user_id}: ${youtubeUrl}`);
 
-    // 1. Configurar Agente camuflado como YouTube TV
-    let agent;
-    if (process.env.YOUTUBE_COOKIE) {
-      try {
-        const cookies = JSON.parse(process.env.YOUTUBE_COOKIE);
-        agent = ytdl.createAgent(cookies);
-      } catch (e) {
-        console.error('[YouTube] Erro nos cookies:', e.message);
-      }
-    }
+    // 1. Configurar agente (proxy dedicado > cookies > padrão)
+    const agent = createYouTubeAgent();
 
     const info = await getYouTubeInfoWithFallback(youtubeUrl, agent);
     const fileName = `${safeFileName(info?.videoDetails?.title)}.mp3`;
