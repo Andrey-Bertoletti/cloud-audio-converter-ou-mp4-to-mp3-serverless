@@ -66,6 +66,7 @@ export class AppComponent implements OnInit {
   private ffmpeg = new FFmpeg();
   private ffmpegLoaded = false;
   private authUnsubscribe?: () => void;
+  private ytProgressInterval?: ReturnType<typeof setInterval>;
 
   constructor(public cdr: ChangeDetectorRef) {}
 
@@ -100,6 +101,7 @@ export class AppComponent implements OnInit {
   ngOnDestroy(): void {
     this.authUnsubscribe?.();
     this.authUnsubscribe = undefined;
+    this.pararProgressoYouTube();
     this.cleanupOutputUrl();
   }
 
@@ -343,7 +345,7 @@ export class AppComponent implements OnInit {
       this.progress = 0;
       this.cdr.markForCheck();
 
-      // Watchdog: Se em 30 segundos não terminar, libera o botão
+      // Watchdog: Se em 45 segundos não terminar, libera o botão
       watchdog = setTimeout(() => {
         if (this.isConverting) {
           this.isConverting = false;
@@ -360,7 +362,7 @@ export class AppComponent implements OnInit {
 
       const fileData = await fetchFile(this.selectedFile);
       await this.ffmpeg.writeFile(inputName, fileData);
-      
+
       // Comando otimizado para velocidade
       await this.ffmpeg.exec(['-i', inputName, '-vn', '-ar', '44100', '-ac', '2', '-b:a', '128k', outputName]);
 
@@ -371,6 +373,7 @@ export class AppComponent implements OnInit {
       this.outputUrl = URL.createObjectURL(mp3Blob);
       this.outputName = outputName;
       this.progress = 100;
+      this.cdr.markForCheck();
 
       void this.persistirConversao(outputName, mp3Blob);
 
@@ -379,6 +382,7 @@ export class AppComponent implements OnInit {
       console.error('FFmpeg Error:', error);
       this.showToast('Falha na conversão: ' + (error.message || 'Erro interno'), 'error');
       this.ffmpegLoaded = false; // Força recarregamento na próxima
+      this.progress = 0;
     } finally {
       if (watchdog) {
         clearTimeout(watchdog);
@@ -392,12 +396,15 @@ export class AppComponent implements OnInit {
   async converterYouTube(): Promise<void> {
     const normalizedUrl = this.youtubeUrl.trim();
     if (!normalizedUrl || this.isYtConverting) return;
-    
+
     try {
       this.errorMessage = '';
       this.isYtConverting = true;
       this.ytStatus = 'Extraindo áudio na nuvem...';
+      this.progress = 0;
       this.cdr.markForCheck();
+
+      this.iniciarProgressoYouTube();
 
       const { data: { session } } = await supabase.auth.getSession();
       const response = await fetch(`${environment.apiBaseUrl}/api/youtube/convert`, {
@@ -414,19 +421,55 @@ export class AppComponent implements OnInit {
         throw new Error(this.formatYouTubeErrorMessage(response.status, result));
       }
 
+      this.pararProgressoYouTube();
+      this.progress = 100;
+      this.ytStatus = 'Concluído';
+      this.cdr.markForCheck();
+
       this.cleanupOutputUrl();
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
       this.showToast('Vídeo do YouTube convertido!', 'success');
       await this.carregarConversoes();
     } catch (error: any) {
+      this.pararProgressoYouTube();
+      this.progress = 0;
       this.errorMessage = error?.message || 'Erro ao converter YouTube';
       this.showToast(this.errorMessage, 'error');
       this.cdr.markForCheck();
     } finally {
+      this.pararProgressoYouTube();
       this.isYtConverting = false;
       this.ytStatus = '';
       this.cdr.markForCheck();
+    }
+  }
+
+  private iniciarProgressoYouTube(): void {
+    this.pararProgressoYouTube();
+    this.progress = 2;
+    this.cdr.markForCheck();
+    this.ytProgressInterval = setInterval(() => {
+      // Sobe rápido até 60%, lento até 90%, congela em 95% aguardando resposta.
+      let inc = 1;
+      if (this.progress < 60) inc = 3;
+      else if (this.progress < 80) inc = 1.5;
+      else if (this.progress < 90) inc = 0.6;
+      else if (this.progress < 95) inc = 0.2;
+      else inc = 0;
+
+      const next = Math.min(95, this.progress + inc);
+      if (next !== this.progress) {
+        this.progress = Math.round(next);
+        this.cdr.markForCheck();
+      }
+    }, 300);
+  }
+
+  private pararProgressoYouTube(): void {
+    if (this.ytProgressInterval) {
+      clearInterval(this.ytProgressInterval);
+      this.ytProgressInterval = undefined;
     }
   }
 
@@ -488,10 +531,12 @@ export class AppComponent implements OnInit {
     });
 
     this.ffmpeg.on('progress', ({ progress }) => {
-      this.progress = Math.round(progress * 100);
+      const pct = Math.round(progress * 100);
+      // Clamp entre 1 e 99 — o 100% só será setado após readFile.
+      this.progress = Math.max(this.progress, Math.min(99, Math.max(1, pct)));
       this.cdr.markForCheck();
     });
-    
+
     this.ffmpegLoaded = true;
   }
 
@@ -517,7 +562,9 @@ export class AppComponent implements OnInit {
     this.youtubeUrl = '';
     this.selectedFile = null;
     this.cleanupOutputUrl();
+    this.pararProgressoYouTube();
     this.progress = 0;
+    this.ytStatus = '';
     this.errorMessage = '';
     this.successMessage = '';
     this.cdr.markForCheck();
