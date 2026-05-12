@@ -2,3 +2,8 @@
 .env*.local
 node_modules
 .env
+.bin/
+cookies.json
+cookies.txt
+tmp_cookie_diag.js
+dist/
