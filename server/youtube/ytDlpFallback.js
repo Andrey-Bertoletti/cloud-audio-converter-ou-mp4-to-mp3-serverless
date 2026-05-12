@@ -89,7 +89,21 @@ function isMissingYoutubeUrlErrorText(text) {
   return /you must provide at least one url/i.test(String(text || ''));
 }
 
-function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl }) {
+const YT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// Player clients que normalmente conseguem furar o bot-challenge em IPs de servidor.
+// A ordem importa: começa pelos que NÃO exigem login/cookies (android_vr, tv_embedded, web_safari).
+const YT_PLAYER_CLIENT_PROFILES = [
+  'android_vr',
+  'tv_embedded',
+  'web_safari',
+  'mweb',
+  'ios',
+  'default'
+];
+
+function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl, playerClient, useCookies = true }) {
   const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
   const outTemplate = `${base}.%(ext)s`;
 
@@ -98,8 +112,21 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl 
     '--no-playlist',
     '--no-warnings',
     '--no-progress',
+    '--no-call-home',
+    '--no-check-certificate',
+    '--geo-bypass',
+    '--retries',
+    '5',
+    '--fragment-retries',
+    '10',
+    '--retry-sleep',
+    '2',
+    '--socket-timeout',
+    '30',
+    '--user-agent',
+    YT_USER_AGENT,
     '--format',
-    'bestaudio/best',
+    'bestaudio[ext=m4a]/bestaudio/best',
     '--extract-audio',
     '--audio-format',
     'mp3',
@@ -108,10 +135,16 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl 
     '--ffmpeg-location',
     ffmpegPath,
     '--output',
-    outTemplate,
-    '--cookies',
-    cookieFilePath
+    outTemplate
   ];
+
+  if (playerClient) {
+    args.push('--extractor-args', `youtube:player_client=${playerClient}`);
+  }
+
+  if (useCookies && cookieFilePath) {
+    args.push('--cookies', cookieFilePath);
+  }
 
   if (proxyUrl) {
     args.push('--proxy', proxyUrl);
@@ -131,15 +164,10 @@ function logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath, proxyUrl }) {
   safeLog.info('[YouTube] Iniciando yt-dlp fallback', {
     hasUrl: Boolean(safeVideoUrl),
     urlHost,
-    argCount: buildYtDlpArgs({
-      safeVideoUrl,
-      outputMp3Path: '[temp].mp3',
-      cookieFilePath,
-      proxyUrl
-    }).length,
     hasCookiesFile: Boolean(cookieFilePath),
     hasProxy: Boolean(proxyUrl),
     hasFfmpeg: Boolean(ffmpegPath),
+    playerClients: YT_PLAYER_CLIENT_PROFILES.length,
     outputDir: '[temp]'
   });
 }
@@ -643,73 +671,156 @@ async function runYtDlpMetadataProbe({ videoUrl, cookiesPath, proxyUrl, timeoutM
   }
 }
 
+function isSessionRejectedStderr(stderr) {
+  const text = String(stderr || '');
+  if (!/sign in to confirm/i.test(text)) return false;
+  return /--cookies-from-browser|--cookies/i.test(text);
+}
+
+async function tryYtDlpAttempt({ args, ytdlpPath, timeoutMs, expected, outputMp3Path }) {
+  let stdout;
+  let stderr;
+  try {
+    ({ stdout, stderr } = await runYtDlp(args, { timeoutMs, ytdlpPath }));
+  } catch (err) {
+    return { ok: false, err };
+  }
+
+  if (!fs.existsSync(expected)) {
+    const error = new Error('yt-dlp finalizou sem gerar o mp3 esperado.');
+    error.code = 'YTDLP_NO_OUTPUT';
+    error.stdout = stdout;
+    error.stderr = stderr;
+    return { ok: false, err: error };
+  }
+
+  if (expected !== outputMp3Path) {
+    await fs.promises.rename(expected, outputMp3Path);
+  }
+
+  return { ok: true, stdout, stderr };
+}
+
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookieHeader, proxyUrl, timeoutMs }) {
   const status = await ensureYtDlpAndFfmpegAvailable();
   const ytdlpPath = status.ytDlpPath || resolveYtDlpPath();
   const safeVideoUrl = assertValidYoutubeUrl(youtubeUrl);
+  const perAttemptTimeout = timeoutMs || 120000;
 
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yt-dlp-'));
   const cookieFilePath = path.join(tempDir, 'cookies.txt');
 
   try {
-    // 1) Cookies em arquivo Netscape (evita vazar cookie em argv)
-    await writeYoutubeCookiesNetscape({ rawCookieInput, cookieHeader, outputPath: cookieFilePath });
-
-    // 2) Saída: yt-dlp usa template. Geramos base e esperamos ".mp3"
-    const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
-    const args = buildYtDlpArgs({
-      safeVideoUrl,
-      outputMp3Path,
-      cookieFilePath,
-      proxyUrl
-    });
-
-    logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath, proxyUrl });
-
-    let stdout;
-    let stderr;
+    // 1) Tenta escrever arquivo Netscape de cookies (pode falhar se cookieInput vazio/inválido).
+    let cookiesAvailable = false;
     try {
-      ({ stdout, stderr } = await runYtDlp(args, { timeoutMs: timeoutMs || 120000, ytdlpPath }));
-    } catch (err) {
-      const combinedText = `${err?.stderr || ''} ${err?.stdout || ''} ${err?.message || ''}`;
+      await writeYoutubeCookiesNetscape({ rawCookieInput, cookieHeader, outputPath: cookieFilePath });
+      cookiesAvailable = true;
+    } catch (cookieErr) {
+      safeLog.warn('[YouTube][yt-dlp] Cookies indisponíveis, tentaremos sem cookies primeiro.', {
+        code: cookieErr?.code,
+        message: cookieErr?.message
+      });
+    }
+
+    const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
+    const expected = `${base}.mp3`;
+
+    logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath: cookiesAvailable ? cookieFilePath : '', proxyUrl });
+
+    // 2) Estratégia: iteramos por (player_client, useCookies). Clients abertos primeiro,
+    //    depois com cookies para vídeos que exigem login (age-gate, privado).
+    const attemptPlan = [];
+    for (const playerClient of YT_PLAYER_CLIENT_PROFILES) {
+      attemptPlan.push({ playerClient, useCookies: false });
+    }
+    if (cookiesAvailable) {
+      for (const playerClient of YT_PLAYER_CLIENT_PROFILES) {
+        attemptPlan.push({ playerClient, useCookies: true });
+      }
+    }
+
+    let lastFailure = null;
+    let sessionRejectedSeen = false;
+    let attemptIndex = 0;
+
+    for (const plan of attemptPlan) {
+      attemptIndex += 1;
+      const args = buildYtDlpArgs({
+        safeVideoUrl,
+        outputMp3Path,
+        cookieFilePath,
+        proxyUrl,
+        playerClient: plan.playerClient,
+        useCookies: plan.useCookies
+      });
+
+      safeLog.info('[YouTube][yt-dlp] Tentativa', {
+        attempt: attemptIndex,
+        total: attemptPlan.length,
+        playerClient: plan.playerClient,
+        useCookies: plan.useCookies
+      });
+
+      // Limpa qualquer arquivo residual de tentativa anterior
+      try {
+        if (fs.existsSync(expected)) await fs.promises.unlink(expected);
+      } catch (_) {
+        // ignore
+      }
+
+      const result = await tryYtDlpAttempt({
+        args,
+        ytdlpPath,
+        timeoutMs: perAttemptTimeout,
+        expected,
+        outputMp3Path
+      });
+
+      if (result.ok) {
+        safeLog.info('[YouTube][yt-dlp] Sucesso', {
+          playerClient: plan.playerClient,
+          useCookies: plan.useCookies
+        });
+        return;
+      }
+
+      lastFailure = result.err;
+      const combinedText = `${result.err?.stderr || ''} ${result.err?.stdout || ''} ${result.err?.message || ''}`;
+
       if (isMissingYoutubeUrlErrorText(combinedText)) {
         const urlErr = new Error('Falha interna: URL não foi enviada corretamente ao yt-dlp.');
         urlErr.code = 'YTDLP_MISSING_URL';
-        urlErr.exitCode = err?.exitCode;
-        urlErr.stdout = err?.stdout;
-        urlErr.stderr = err?.stderr;
+        urlErr.exitCode = result.err?.exitCode;
+        urlErr.stdout = result.err?.stdout;
+        urlErr.stderr = result.err?.stderr;
         throw urlErr;
       }
 
-      if (
-        (err?.stderr || '').includes('Sign in to confirm') &&
-        ((err?.stderr || '').includes('--cookies-from-browser') || (err?.stderr || '').includes('--cookies'))
-      ) {
-        const sessionErr = new Error('YouTube recusou os cookies de sessão neste servidor/proxy.');
-        sessionErr.code = 'YOUTUBE_SESSION_REJECTED';
-        sessionErr.retryAfterSeconds = 300;
-        sessionErr.exitCode = err?.exitCode;
-        sessionErr.stdout = err?.stdout;
-        sessionErr.stderr = err?.stderr;
-        throw sessionErr;
+      if (isSessionRejectedStderr(result.err?.stderr)) {
+        sessionRejectedSeen = true;
       }
 
-      throw err;
+      safeLog.warn('[YouTube][yt-dlp] Tentativa falhou, tentando próximo perfil', {
+        playerClient: plan.playerClient,
+        useCookies: plan.useCookies,
+        code: result.err?.code,
+        exitCode: result.err?.exitCode
+      });
     }
 
-    const expected = `${base}.mp3`;
-    if (!fs.existsSync(expected)) {
-      const error = new Error('yt-dlp finalizou sem gerar o mp3 esperado.');
-      error.code = 'YTDLP_NO_OUTPUT';
-      error.stdout = stdout;
-      error.stderr = stderr;
-      throw error;
+    // Todas as tentativas falharam.
+    if (sessionRejectedSeen) {
+      const sessionErr = new Error('YouTube recusou os cookies de sessão neste servidor/proxy.');
+      sessionErr.code = 'YOUTUBE_SESSION_REJECTED';
+      sessionErr.retryAfterSeconds = 300;
+      sessionErr.exitCode = lastFailure?.exitCode;
+      sessionErr.stdout = lastFailure?.stdout;
+      sessionErr.stderr = lastFailure?.stderr;
+      throw sessionErr;
     }
 
-    // Normaliza para o caminho de saída pedido
-    if (expected !== outputMp3Path) {
-      await fs.promises.rename(expected, outputMp3Path);
-    }
+    throw lastFailure || new Error('yt-dlp falhou em todas as tentativas.');
   } finally {
     try {
       await fs.promises.rm(tempDir, { recursive: true, force: true });

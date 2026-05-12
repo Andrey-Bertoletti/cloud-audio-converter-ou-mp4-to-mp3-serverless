@@ -178,9 +178,9 @@
               </div>
 
               <!-- Progress -->
-              <div *ngIf="isConverting || isYtConverting" class="mt-10 p-6 rounded-2xl bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5">
+              <div *ngIf="mostrarProgresso" class="mt-10 p-6 rounded-2xl bg-slate-50 dark:bg-white/[0.02] border border-slate-200 dark:border-white/5">
                 <div class="flex items-center justify-between mb-4">
-                  <span class="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em]">{{ isYtConverting ? ytStatus : 'Conversão' }}</span>
+                  <span class="text-[10px] font-bold text-indigo-500 uppercase tracking-[0.2em]">{{ progress >= 100 ? 'Concluído' : (isYtConverting ? ytStatus : 'Conversão') }}</span>
                   <span class="text-sm font-bold text-slate-900 dark:text-white">{{ progress }}%</span>
                 </div>
                 <div class="h-2 w-full bg-slate-200 dark:bg-white/10 rounded-full overflow-hidden">

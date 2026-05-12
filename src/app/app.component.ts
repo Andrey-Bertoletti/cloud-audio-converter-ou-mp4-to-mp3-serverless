@@ -40,6 +40,7 @@ export class AppComponent implements OnInit {
   isYtConverting = false;
   ytStatus = '';
   isConverting = false;
+  mostrarProgresso = false;
   isSavingProfile = false;
   isUpdatingPassword = false;
   isAuthActionLoading = false;
@@ -67,6 +68,7 @@ export class AppComponent implements OnInit {
   private ffmpegLoaded = false;
   private authUnsubscribe?: () => void;
   private ytProgressInterval?: ReturnType<typeof setInterval>;
+  private hideProgressTimeout?: ReturnType<typeof setTimeout>;
 
   constructor(public cdr: ChangeDetectorRef) {}
 
@@ -102,6 +104,7 @@ export class AppComponent implements OnInit {
     this.authUnsubscribe?.();
     this.authUnsubscribe = undefined;
     this.pararProgressoYouTube();
+    this.cancelarHideProgressTimeout();
     this.cleanupOutputUrl();
   }
 
@@ -342,13 +345,16 @@ export class AppComponent implements OnInit {
     try {
       this.errorMessage = '';
       this.isConverting = true;
+      this.mostrarProgresso = true;
       this.progress = 0;
+      this.cancelarHideProgressTimeout();
       this.cdr.markForCheck();
 
       // Watchdog: Se em 45 segundos não terminar, libera o botão
       watchdog = setTimeout(() => {
         if (this.isConverting) {
           this.isConverting = false;
+          this.mostrarProgresso = false;
           this.showToast('Conversão demorou demais. Tente novamente.', 'error');
           this.cdr.markForCheck();
         }
@@ -378,11 +384,13 @@ export class AppComponent implements OnInit {
       void this.persistirConversao(outputName, mp3Blob);
 
       this.showToast('Conversão concluída com sucesso!', 'success');
+      this.agendarFechamentoProgresso();
     } catch (error: any) {
       console.error('FFmpeg Error:', error);
       this.showToast('Falha na conversão: ' + (error.message || 'Erro interno'), 'error');
       this.ffmpegLoaded = false; // Força recarregamento na próxima
       this.progress = 0;
+      this.mostrarProgresso = false;
     } finally {
       if (watchdog) {
         clearTimeout(watchdog);
@@ -400,8 +408,10 @@ export class AppComponent implements OnInit {
     try {
       this.errorMessage = '';
       this.isYtConverting = true;
+      this.mostrarProgresso = true;
       this.ytStatus = 'Extraindo áudio na nuvem...';
       this.progress = 0;
+      this.cancelarHideProgressTimeout();
       this.cdr.markForCheck();
 
       this.iniciarProgressoYouTube();
@@ -431,17 +441,35 @@ export class AppComponent implements OnInit {
       this.outputName = result.fileName;
       this.showToast('Vídeo do YouTube convertido!', 'success');
       await this.carregarConversoes();
+      this.agendarFechamentoProgresso();
     } catch (error: any) {
       this.pararProgressoYouTube();
       this.progress = 0;
+      this.mostrarProgresso = false;
       this.errorMessage = error?.message || 'Erro ao converter YouTube';
       this.showToast(this.errorMessage, 'error');
       this.cdr.markForCheck();
     } finally {
       this.pararProgressoYouTube();
       this.isYtConverting = false;
+      this.cdr.markForCheck();
+    }
+  }
+
+  private agendarFechamentoProgresso(): void {
+    this.cancelarHideProgressTimeout();
+    this.hideProgressTimeout = setTimeout(() => {
+      this.mostrarProgresso = false;
+      this.progress = 0;
       this.ytStatus = '';
       this.cdr.markForCheck();
+    }, 1500);
+  }
+
+  private cancelarHideProgressTimeout(): void {
+    if (this.hideProgressTimeout) {
+      clearTimeout(this.hideProgressTimeout);
+      this.hideProgressTimeout = undefined;
     }
   }
 
@@ -563,6 +591,8 @@ export class AppComponent implements OnInit {
     this.selectedFile = null;
     this.cleanupOutputUrl();
     this.pararProgressoYouTube();
+    this.cancelarHideProgressTimeout();
+    this.mostrarProgresso = false;
     this.progress = 0;
     this.ytStatus = '';
     this.errorMessage = '';
