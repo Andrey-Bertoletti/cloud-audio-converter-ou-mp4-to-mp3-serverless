@@ -164,3 +164,55 @@ test('ytDlpFallback: writeYoutubeCookiesNetscape gera linhas válidas e preserva
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test('ytDlpFallback: valida diagnóstico de cookies com essenciais e expirados', async () => {
+  const { validateCookiesNetscapeStructure } = _private;
+
+  const now = Math.floor(Date.now() / 1000);
+  const futureExpiry = now + 86400 * 30; // 30 dias no futuro
+  const pastExpiry = now - 86400; // 1 dia no passado
+
+  const cookies = [
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: pastExpiry, name: 'OLD_COOKIE', value: 'expired' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'LOGIN_INFO', value: 'abc123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'SID', value: 'sid123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'HSID', value: 'hsid123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'SSID', value: 'ssid123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'SAPISID', value: 'sapis123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: true, expirationDate: futureExpiry, name: '__Secure-1PSID', value: 'psid1' },
+    { domain: '.google.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'NID', value: 'nid123' }
+  ];
+
+  const diag = await validateCookiesNetscapeStructure(cookies);
+
+  assert.equal(diag.cookieCount, 8);
+  assert.equal(diag.youtubeCookieCount, 7);
+  assert.equal(diag.googleCookieCount, 1);
+  assert.equal(diag.expiredCookieCount, 1);
+  assert.ok(diag.hasLoginInfo);
+  assert.ok(diag.hasSid);
+  assert.ok(diag.hasHsid);
+  assert.ok(diag.hasSsid);
+  assert.ok(diag.hasSapisid);
+  assert.ok(diag.hasSecure1PSid);
+  assert.ok(diag.allSecureCookiesMarkedSecure);
+  assert.ok(diag.hasHttpOnlyPrefix);
+});
+
+test('ytDlpFallback: detecta essenciais ausentes no diagnóstico', async () => {
+  const { validateCookiesNetscapeStructure } = _private;
+
+  const futureExpiry = Math.floor(Date.now() / 1000) + 86400 * 30;
+
+  const cookies = [
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'SID', value: 'sid123' },
+    { domain: '.youtube.com', path: '/', secure: true, httpOnly: false, expirationDate: futureExpiry, name: 'HSID', value: 'hsid123' }
+  ];
+
+  const diag = await validateCookiesNetscapeStructure(cookies);
+
+  assert.equal(diag.cookieCount, 2);
+  assert.ok(!diag.hasLoginInfo);
+  assert.ok(!diag.hasSapisid);
+  assert.ok(!diag.hasSecure1PSid);
+});

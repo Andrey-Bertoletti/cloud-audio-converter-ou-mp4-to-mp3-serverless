@@ -544,12 +544,20 @@ function createApp(options = {}) {
             await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, rawCookieInput, cookieHeader, proxyUrl });
             safeLog('log', '[YouTube] yt-dlp fallback concluído.');
           } catch (fallbackError) {
-            safeLog.warn('[YouTube] fallback yt-dlp também falhou.', {
+          safeLog.warn('[YouTube] fallback yt-dlp também falhou.', {
               code: fallbackError?.code,
               exitCode: fallbackError?.exitCode,
               message: sanitizeLogText(fallbackError?.message),
               stderr: summarizeYtDlpStderr(fallbackError?.stderr)
             });
+
+            if (fallbackError?.code === 'YOUTUBE_SESSION_REJECTED') {
+              return res.status(429).json({
+                error: 'YOUTUBE_SESSION_REJECTED',
+                message: 'YouTube recusou os cookies de sessão neste servidor/proxy. Gere cookies novos usando a mesma conta e evite trocar IP/região entre login e download.',
+                retryAfterSeconds: fallbackError?.retryAfterSeconds || 300
+              });
+            }
 
             if (fallbackError?.code === 'YTDLP_NOT_AVAILABLE') {
               return res.status(500).json({
@@ -616,6 +624,14 @@ function createApp(options = {}) {
         return res.status(500).json({
           error: 'YOUTUBE_COOKIE_INVALID',
           message: 'O cookie do YouTube está em formato inválido no servidor.'
+        });
+      }
+
+      if (error?.code === 'YOUTUBE_SESSION_REJECTED') {
+        return res.status(429).json({
+          error: 'YOUTUBE_SESSION_REJECTED',
+          message: 'YouTube recusou a sessão/cookie ou bloqueou o IP/proxy usado pelo servidor.',
+          retryAfterSeconds: error?.retryAfterSeconds || 300
         });
       }
 

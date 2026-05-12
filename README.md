@@ -94,3 +94,116 @@ Observação importante: a mensagem **"Sign in to confirm you’re not a bot"** 
 Fallback técnico: quando o `@distube/ytdl-core` falha com bloqueio/429, o backend tenta um fallback com `yt-dlp` (executado via `child_process.spawn`). Para funcionar, o binário precisa estar disponível no servidor e apontado por `YTDLP_PATH`.
 
 Segurança (reforço): se o proxy/cookies vazaram em logs de produção, **rotacione imediatamente**. Nunca cole logs contendo `YOUTUBE_PROXY_URL` real nem valores de cookies.
+
+### YouTube cookies e proxy
+
+#### Entendimento da autenticação
+
+O YouTube usa autenticação baseada em **cookie de sessão + IP**. A combinação precisa ser coerente:
+
+- Se faz login na conta pelo navegador **na região A** (ex: Brasil com ISP), os cookies gerados carregam expectativa de região/IP A.
+- Se depois tenta usar esses cookies **da região B** (ex: datacenter nos EUA), o YouTube pode rejeitar com: `"Sign in to confirm you're not a bot. Use --cookies-from-browser or --cookies for the authentication..."`
+- Isso **não é erro de instalação ou ffmpeg** — é rejeição da sessão pelo YouTube.
+
+#### Preparando cookies válidos
+
+1. **Exporte de uma sessão real logada:**
+   - Use extensão do navegador (ex: Get cookies.txt) ou ferramentas de developer (F12 → Network → Cookies).
+   - Ou rode localmente: `yt-dlp --cookies-from-browser firefox --dump-json --skip-download URL` para testar.
+   - Exporte em formato JSON array ou Netscape (`# Netscape HTTP Cookie File`).
+
+2. **Inclua essenciais:**
+   - `LOGIN_INFO`
+   - `SID`
+   - `HSID`
+   - `SSID`
+   - `SAPISID`
+   - `__Secure-1PSID`
+   - `__Secure-3PSID`
+
+3. **Valide a exportação:**
+   - No servidor, o backend processa e alerta se `LOGIN_INFO` ou cookies essenciais estão faltando.
+   - Se apenas `__Secure-1PSID` está presente (sem `LOGIN_INFO`), a sessão pode estar incompleta.
+
+#### Usando proxy
+
+Se usar proxy, prefira:
+
+- **Residencial/ISP:** IPs estáveis da mesma região da sessão.
+- **Evitar datacenter:** IPs bloqueados automaticamente pelo YouTube.
+- **Coerência:** Use proxy na mesma região em que fez login.
+- **Rotação:** Se IP/proxy já foi bloqueado/exposto, rotacione.
+
+#### Detectando problemas
+
+**Erro 429 com `YOUTUBE_SESSION_REJECTED`:**
+
+O backend retorna HTTP 429 se `yt-dlp` retorna `"Sign in to confirm you're not a bot"`. Significa:
+
+```json
+{
+  "error": "YOUTUBE_SESSION_REJECTED",
+  "message": "YouTube recusou os cookies de sessão neste servidor/proxy.",
+  "retryAfterSeconds": 300
+}
+```
+
+**Diagnóstico manual:**
+
+No Render Shell ou ambiente similar, teste:
+
+```bash
+# Verifica instalação
+.bin/yt-dlp --version
+ffmpeg -version
+
+# Testa autenticação SEM baixar (retorna metadados ou erro de sessão)
+.bin/yt-dlp \
+  --cookies /tmp/cookies.txt \
+  --proxy "http://PROXY_IP:PROXY_PORT" \
+  --dump-json \
+  --skip-download \
+  "https://youtu.be/VIDEO_ID"
+```
+
+Se retorna `"Sign in to confirm you're not a bot"` neste comando, o YouTube rejeitou a sessão. **Não é bug de código** — regenere cookies:
+
+1. Gere cookies novos de uma conta logada.
+2. Use na mesma região/IP (se estava no Brasil, mantenha IP Brasil).
+3. Se proxy estava exposto, mude para IP novo.
+4. Teste primeiro com vídeo público curto.
+
+#### Segurança de logs
+
+**Nunca expor em logs:**
+
+- Valores de cookies (ex: `SID=xyz123`)
+- Credenciais do proxy (ex: `http://user:pass@proxy.com`)
+- Comando completo contendo URL do vídeo + proxy
+
+O backend usa `safeLog` para redação automática. Se acidentalmente expor em logs de produção:
+
+- Redenominar cookies (`YOUTUBE_COOKIE`)
+- Trocar proxy (`YOUTUBE_PROXY_URL`)
+- Fazer revoke de tokens se houver
+
+#### Exemplo de teste local
+
+```bash
+# 1) Exporte cookies do navegador
+#    Salve em ./cookies.txt (formato Netscape)
+
+# 2) Com proxy (teste rápido, sem download)
+yt-dlp \
+  --cookies ./cookies.txt \
+  --proxy "http://127.0.0.1:8080" \
+  --dump-json \
+  --skip-download \
+  "https://youtu.be/KlKKYMQOXr4"
+
+# 3) Se erro "Sign in to confirm", cookies/proxy problema
+#    Se sucesso, retorna JSON com metadados do vídeo
+```
+
+Se sucesso neste teste, o MP3 deve gerar no servidor. Se falha, o YouTube recusou a sessão naquela região/proxy.
+

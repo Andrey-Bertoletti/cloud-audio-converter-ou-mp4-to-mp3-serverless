@@ -370,6 +370,67 @@ function detectCookieNames(cookies) {
   return set;
 }
 
+async function validateCookiesNetscapeStructure(cookies) {
+  const diagnostics = {
+    cookieCount: 0,
+    youtubeCookieCount: 0,
+    googleCookieCount: 0,
+    expiredCookieCount: 0,
+    hasLoginInfo: false,
+    hasSid: false,
+    hasHsid: false,
+    hasSsid: false,
+    hasSapisid: false,
+    hasSecure1PSid: false,
+    hasSecure3PSid: false,
+    allSecureCookiesMarkedSecure: true,
+    hasHttpOnlyPrefix: false
+  };
+
+  if (!cookies || !Array.isArray(cookies)) return diagnostics;
+
+  const now = Math.floor(Date.now() / 1000);
+  const names = detectCookieNames(cookies);
+  const secureCookieNames = new Set();
+
+  for (const cookie of cookies) {
+    if (!cookie?.name || !cookie?.value) continue;
+
+    diagnostics.cookieCount += 1;
+
+    const domain = String(cookie?.domain || '').toLowerCase();
+    if (domain.includes('youtube.com')) diagnostics.youtubeCookieCount += 1;
+    if (domain.includes('google.com')) diagnostics.googleCookieCount += 1;
+
+    const expiry = cookie?.expirationDate ?? cookie?.expiry ?? cookie?.expires;
+    if (typeof expiry === 'number' && expiry > 0 && expiry < now) {
+      diagnostics.expiredCookieCount += 1;
+    }
+
+    const cookieName = String(cookie?.name);
+    if (cookieName.startsWith('__Secure-') || cookieName.startsWith('__Host-')) {
+      secureCookieNames.add(cookieName);
+      if (cookie?.secure !== true) {
+        diagnostics.allSecureCookiesMarkedSecure = false;
+      }
+    }
+
+    if (cookie?.httpOnly === true) {
+      diagnostics.hasHttpOnlyPrefix = true;
+    }
+  }
+
+  diagnostics.hasLoginInfo = names.has('LOGIN_INFO');
+  diagnostics.hasSid = names.has('SID');
+  diagnostics.hasHsid = names.has('HSID');
+  diagnostics.hasSsid = names.has('SSID');
+  diagnostics.hasSapisid = names.has('SAPISID');
+  diagnostics.hasSecure1PSid = names.has('__Secure-1PSID');
+  diagnostics.hasSecure3PSid = names.has('__Secure-3PSID');
+
+  return diagnostics;
+}
+
 async function writeYoutubeCookiesNetscape({ rawCookieInput, cookieHeader, outputPath }) {
   const raw = normalizeRawInput(rawCookieInput);
   let cookieArray = tryParseCookieJsonArray(raw);
@@ -395,30 +456,22 @@ async function writeYoutubeCookiesNetscape({ rawCookieInput, cookieHeader, outpu
     throw err;
   }
 
-  const cookieCount = (cookies || []).filter((c) => c?.name && c?.value).length;
-  const names = detectCookieNames(cookies);
-  const hasLoginInfo = names.has('LOGIN_INFO');
-  const hasSid = names.has('SID') || names.has('__Secure-1PSID') || names.has('__Secure-3PSID');
-  const hasHsid = names.has('HSID') || names.has('__Secure-1PSID') || names.has('__Secure-3PSID');
-  const hasSsid = names.has('SSID') || names.has('__Secure-1PSID') || names.has('__Secure-3PSID');
-  const hasSapisid = names.has('SAPISID') || names.has('__Secure-1PAPISID') || names.has('__Secure-3PAPISID');
-  const hasSecureSid = names.has('__Secure-1PSID') || names.has('__Secure-3PSID') || names.has('__Secure-1PSIDCC');
+  const diagnostics = await validateCookiesNetscapeStructure(cookies);
 
-  safeLog.info('[YouTube] Arquivo cookies Netscape criado', {
-    cookieCount,
-    hasLoginInfo,
-    hasSid,
-    hasHsid,
-    hasSsid,
-    hasSapisid,
-    hasSecureSid,
-    path: '[temp]'
-  });
+  safeLog.info('[YouTube] Diagnóstico cookies Netscape', diagnostics);
 
-  if (cookieCount < 5) {
+  if (diagnostics.cookieCount < 5) {
     const err = new Error('Arquivo cookies Netscape parece incompleto (poucos cookies).');
     err.code = 'YTDLP_COOKIEFILE_TOO_SMALL';
     throw err;
+  }
+
+  if (!diagnostics.hasLoginInfo) {
+    safeLog.warn('[YouTube] Cookie essencial LOGIN_INFO não encontrado', {
+      presentCookies: diagnostics.cookieCount,
+      hasSecure1PSid: diagnostics.hasSecure1PSid,
+      hasSecure3PSid: diagnostics.hasSecure3PSid
+    });
   }
 }
 
@@ -527,6 +580,69 @@ function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
   });
 }
 
+async function runYtDlpMetadataProbe({ videoUrl, cookiesPath, proxyUrl, timeoutMs }) {
+  const safeVideoUrl = assertValidYoutubeUrl(videoUrl);
+  const ytdlpPath = resolveYtDlpPath();
+
+  const args = [
+    safeVideoUrl,
+    '--no-playlist',
+    '--no-warnings',
+    '--no-progress',
+    '--dump-json',
+    '--skip-download'
+  ];
+
+  if (cookiesPath) {
+    args.push('--cookies', cookiesPath);
+  }
+
+  if (proxyUrl) {
+    args.push('--proxy', proxyUrl);
+  }
+
+  try {
+    const { stdout, stderr } = await runYtDlp(args, {
+      timeoutMs: timeoutMs || 30000,
+      ytdlpPath
+    });
+
+    let metadata = null;
+    try {
+      metadata = JSON.parse(stdout);
+    } catch (_) {
+      // Ignore JSON parse errors; metadata may be null
+    }
+
+    return {
+      success: true,
+      metadata,
+      stderr
+    };
+  } catch (err) {
+    const combinedText = `${err?.stderr || ''} ${err?.stdout || ''}`.toLowerCase();
+
+    if (
+      combinedText.includes('sign in to confirm') ||
+      (combinedText.includes('use') && combinedText.includes('--cookies'))
+    ) {
+      return {
+        success: false,
+        error: 'YOUTUBE_SESSION_REJECTED',
+        message: 'YouTube recusou os cookies de sessão neste servidor/proxy.',
+        stderr: err?.stderr
+      };
+    }
+
+    return {
+      success: false,
+      error: err?.code || 'YTDLP_METADATA_PROBE_FAILED',
+      message: err?.message,
+      stderr: err?.stderr
+    };
+  }
+}
+
 async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookieHeader, proxyUrl, timeoutMs }) {
   const status = await ensureYtDlpAndFfmpegAvailable();
   const ytdlpPath = status.ytDlpPath || resolveYtDlpPath();
@@ -564,6 +680,20 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookie
         urlErr.stderr = err?.stderr;
         throw urlErr;
       }
+
+      if (
+        (err?.stderr || '').includes('Sign in to confirm') &&
+        ((err?.stderr || '').includes('--cookies-from-browser') || (err?.stderr || '').includes('--cookies'))
+      ) {
+        const sessionErr = new Error('YouTube recusou os cookies de sessão neste servidor/proxy.');
+        sessionErr.code = 'YOUTUBE_SESSION_REJECTED';
+        sessionErr.retryAfterSeconds = 300;
+        sessionErr.exitCode = err?.exitCode;
+        sessionErr.stdout = err?.stdout;
+        sessionErr.stderr = err?.stderr;
+        throw sessionErr;
+      }
+
       throw err;
     }
 
@@ -598,9 +728,11 @@ module.exports = {
   maskPath,
   resolveYtDlpPath,
   runYtDlpToMp3,
+  runYtDlpMetadataProbe,
   _private: {
     cookieArrayToNetscape,
     writeYoutubeCookiesNetscape,
+    validateCookiesNetscapeStructure,
     maskProxyUrl,
     buildYtDlpArgs,
     logYtDlpFallbackStart,
