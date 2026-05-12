@@ -11,6 +11,7 @@ const os = require('os');
 const { safeLog, redactString } = require('./utils/safeLog');
 const { normalizeYoutubeCookie, assertValidCookieHeader } = require('./utils/normalizeYoutubeCookie');
 const { runYtDlpToMp3 } = require('./youtube/ytDlpFallback');
+const { runPipedToMp3 } = require('./youtube/pipedFallback');
 
 const YT_HEADERS_TV = {
   'User-Agent':
@@ -385,6 +386,7 @@ function createApp(options = {}) {
   const authMiddleware = disableAuth ? null : options.authMiddleware || require('./middleware/auth');
   const supabaseAdmin = options.supabaseAdmin || require('./config/supabaseAdmin').supabaseAdmin;
   const runYtDlpToMp3Fn = options.runYtDlpToMp3 || runYtDlpToMp3;
+  const runPipedToMp3Fn = options.runPipedToMp3 || runPipedToMp3;
 
   ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -540,31 +542,18 @@ function createApp(options = {}) {
 
           safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
 
+          let ytDlpFatalError = null;
+
           try {
             await runYtDlpToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, rawCookieInput, cookieHeader, proxyUrl });
             safeLog('log', '[YouTube] yt-dlp fallback concluído.');
           } catch (fallbackError) {
-          safeLog.warn('[YouTube] fallback yt-dlp também falhou.', {
+            safeLog.warn('[YouTube] fallback yt-dlp também falhou. Tentando Piped/Invidious.', {
               code: fallbackError?.code,
               exitCode: fallbackError?.exitCode,
               message: sanitizeLogText(fallbackError?.message),
               stderr: summarizeYtDlpStderr(fallbackError?.stderr)
             });
-
-            if (fallbackError?.code === 'YOUTUBE_SESSION_REJECTED') {
-              return res.status(429).json({
-                error: 'YOUTUBE_SESSION_REJECTED',
-                message: 'YouTube recusou os cookies de sessão neste servidor/proxy. Gere cookies novos usando a mesma conta e evite trocar IP/região entre login e download.',
-                retryAfterSeconds: fallbackError?.retryAfterSeconds || 300
-              });
-            }
-
-            if (fallbackError?.code === 'YTDLP_NOT_AVAILABLE') {
-              return res.status(500).json({
-                error: 'YTDLP_NOT_AVAILABLE',
-                message: 'yt-dlp/ffmpeg não está disponível no ambiente do servidor.'
-              });
-            }
 
             if (fallbackError?.code === 'YTDLP_MISSING_URL') {
               return res.status(500).json({
@@ -573,14 +562,50 @@ function createApp(options = {}) {
               });
             }
 
-            if (isYoutubeBotChallenge(fallbackError)) {
-              return botChallengeResponse(res, YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS);
+            ytDlpFatalError = fallbackError;
+
+            try {
+              const pipedResult = await runPipedToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath });
+              if (pipedResult?.title) {
+                titleForFile = pipedResult.title;
+              }
+              ytDlpFatalError = null;
+              safeLog.info('[YouTube] Piped/Invidious fallback concluído.', {
+                source: pipedResult?.source
+              });
+            } catch (pipedError) {
+              safeLog.warn('[YouTube] Piped/Invidious também falhou.', {
+                code: pipedError?.code,
+                message: sanitizeLogText(pipedError?.message)
+              });
             }
 
-            return res.status(500).json({
-              error: 'YTDLP_FALLBACK_FAILED',
-              message: 'O fallback yt-dlp falhou durante a conversão.'
-            });
+            if (ytDlpFatalError) {
+              if (ytDlpFatalError?.code === 'YOUTUBE_SESSION_REJECTED') {
+                return res.status(429).json({
+                  error: 'YOUTUBE_SESSION_REJECTED',
+                  message:
+                    'YouTube recusou os cookies de sessão neste servidor/proxy e todas as instâncias públicas falharam. Tente novamente em alguns minutos.',
+                  retryAfterSeconds: ytDlpFatalError?.retryAfterSeconds || 300
+                });
+              }
+
+              if (ytDlpFatalError?.code === 'YTDLP_NOT_AVAILABLE') {
+                return res.status(500).json({
+                  error: 'YTDLP_NOT_AVAILABLE',
+                  message: 'yt-dlp/ffmpeg não está disponível no ambiente do servidor.'
+                });
+              }
+
+              if (isYoutubeBotChallenge(ytDlpFatalError)) {
+                return botChallengeResponse(res, YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS);
+              }
+
+              return res.status(500).json({
+                error: 'YTDLP_FALLBACK_FAILED',
+                message: 'Todos os fallbacks (yt-dlp e Piped) falharam durante a conversão.'
+              });
+            }
           }
         }
 
