@@ -13,6 +13,8 @@ type Conversao = {
   criado_em: string;
 };
 
+type YoutubeFormat = 'mp3' | 'mp4';
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -35,7 +37,10 @@ export class AppComponent implements OnInit {
   
   // Tab State
   currentTab: 'local' | 'youtube' = 'local';
-  
+
+  // YouTube format selection
+  youtubeFormat: YoutubeFormat = 'mp3';
+
   // Converting state
   isYtConverting = false;
   ytStatus = '';
@@ -401,15 +406,24 @@ export class AppComponent implements OnInit {
     }
   }
 
+  setYoutubeFormat(format: YoutubeFormat): void {
+    if (this.isYtConverting) return;
+    this.youtubeFormat = format;
+    this.cdr.markForCheck();
+  }
+
   async converterYouTube(): Promise<void> {
     const normalizedUrl = this.youtubeUrl.trim();
     if (!normalizedUrl || this.isYtConverting) return;
+
+    const format = this.youtubeFormat;
+    const isMp4 = format === 'mp4';
 
     try {
       this.errorMessage = '';
       this.isYtConverting = true;
       this.mostrarProgresso = true;
-      this.ytStatus = 'Extraindo áudio na nuvem...';
+      this.ytStatus = isMp4 ? 'Extraindo vídeo na nuvem...' : 'Extraindo áudio na nuvem...';
       this.progress = 0;
       this.cancelarHideProgressTimeout();
       this.cdr.markForCheck();
@@ -423,7 +437,7 @@ export class AppComponent implements OnInit {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session?.access_token}`
         },
-        body: JSON.stringify({ youtubeUrl: normalizedUrl })
+        body: JSON.stringify({ youtubeUrl: normalizedUrl, format })
       });
 
       const result = await response.json();
@@ -439,7 +453,7 @@ export class AppComponent implements OnInit {
       this.cleanupOutputUrl();
       this.outputUrl = result.downloadUrl;
       this.outputName = result.fileName;
-      this.showToast('Vídeo do YouTube convertido!', 'success');
+      this.showToast(isMp4 ? 'Vídeo do YouTube convertido em MP4!' : 'Áudio do YouTube convertido em MP3!', 'success');
       await this.carregarConversoes();
       this.agendarFechamentoProgresso();
     } catch (error: any) {
@@ -454,6 +468,13 @@ export class AppComponent implements OnInit {
       this.isYtConverting = false;
       this.cdr.markForCheck();
     }
+  }
+
+  fileExtension(name: string): string {
+    if (!name) return '';
+    const idx = name.lastIndexOf('.');
+    if (idx < 0) return '';
+    return name.slice(idx + 1).toLowerCase();
   }
 
   private agendarFechamentoProgresso(): void {

@@ -82,7 +82,7 @@ test('POST /api/youtube/convert: fallback yt-dlp falha (não-bot) e não derruba
     const json = await response.json();
     assert.deepEqual(json, {
       error: 'YTDLP_FALLBACK_FAILED',
-      message: 'O fallback yt-dlp falhou durante a conversão.'
+      message: 'Todos os fallbacks (yt-dlp e Piped) falharam durante a conversão.'
     });
 
     assert.equal(fallbackCalls, 1);

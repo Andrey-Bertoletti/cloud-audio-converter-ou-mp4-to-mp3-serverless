@@ -95,14 +95,29 @@
     animation-duration: 500ms;
     animation-fill-mode: both;
   }
-  
+
   .fade-in {
     animation-name: fadeIn;
   }
-  
+
   .slide-in-from-bottom-4 {
     animation-name: slideInBottom;
   }
+
+  .slide-in-from-bottom-6 {
+    animation-name: slideInBottom6;
+  }
+
+  .slide-in-from-right-6 {
+    animation-name: slideInRight6;
+  }
+
+  .slide-in-from-right-8 {
+    animation-name: slideInRight8;
+  }
+
+  .duration-500 { animation-duration: 500ms; }
+  .duration-700 { animation-duration: 700ms; }
 
   @keyframes fadeIn {
     from { opacity: 0; }
@@ -112,5 +127,20 @@
   @keyframes slideInBottom {
     from { transform: translateY(1rem); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
+  }
+
+  @keyframes slideInBottom6 {
+    from { transform: translateY(1.5rem); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  @keyframes slideInRight6 {
+    from { transform: translateX(1.5rem); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
+  @keyframes slideInRight8 {
+    from { transform: translateX(2rem); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
   }
 }

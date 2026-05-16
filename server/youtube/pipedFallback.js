@@ -151,6 +151,62 @@ function pickBestAudioFromInvidious(payload) {
   return sorted[0];
 }
 
+function pickProgressiveMp4FromPiped(payload) {
+  if (!payload || !Array.isArray(payload.videoStreams) || payload.videoStreams.length === 0) {
+    return null;
+  }
+
+  const candidates = payload.videoStreams
+    .filter((s) => s && s.url && !s.videoOnly && String(s.format || '').toLowerCase().includes('mp4'))
+    .sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+
+  return candidates[0] || null;
+}
+
+function pickBestVideoOnlyMp4FromPiped(payload) {
+  if (!payload || !Array.isArray(payload.videoStreams)) return null;
+
+  const candidates = payload.videoStreams
+    .filter((s) => s && s.url && s.videoOnly && String(s.format || '').toLowerCase().includes('mp4'))
+    .sort((a, b) => {
+      const heightDiff = (Number(b.height) || 0) - (Number(a.height) || 0);
+      if (heightDiff !== 0) return heightDiff;
+      return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+    });
+
+  return candidates[0] || null;
+}
+
+function pickProgressiveMp4FromInvidious(payload) {
+  if (!payload || !Array.isArray(payload.formatStreams) || payload.formatStreams.length === 0) {
+    return null;
+  }
+
+  const candidates = payload.formatStreams
+    .filter((f) => f && f.url && String(f.container || '').toLowerCase() === 'mp4')
+    .sort((a, b) => (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0));
+
+  return candidates[0] || null;
+}
+
+function pickBestVideoOnlyMp4FromInvidious(payload) {
+  if (!payload || !Array.isArray(payload.adaptiveFormats)) return null;
+
+  const candidates = payload.adaptiveFormats
+    .filter((f) => {
+      if (!f || !f.url) return false;
+      const type = String(f.type || '').toLowerCase();
+      return type.startsWith('video/mp4');
+    })
+    .sort((a, b) => {
+      const heightDiff = (Number(b.resolution) || Number(b.height) || 0) - (Number(a.resolution) || Number(a.height) || 0);
+      if (heightDiff !== 0) return heightDiff;
+      return (Number(b.bitrate) || 0) - (Number(a.bitrate) || 0);
+    });
+
+  return candidates[0] || null;
+}
+
 function safeTitle(rawTitle, fallback) {
   const text = String(rawTitle || '').trim();
   return text || fallback;
@@ -196,6 +252,80 @@ async function tryInvidiousInstances(videoId) {
       }
     } catch (err) {
       safeLog.warn('[YouTube][invidious] instância falhou', {
+        instance: base,
+        message: err?.message
+      });
+    }
+  }
+  return null;
+}
+
+async function tryPipedInstancesMp4(videoId) {
+  for (const base of PIPED_API_INSTANCES) {
+    const endpoint = `${base.replace(/\/$/, '')}/streams/${encodeURIComponent(videoId)}`;
+    try {
+      safeLog.info('[YouTube][piped-mp4] tentando instância', { instance: base });
+      const data = await fetchJson(endpoint, { timeoutMs: FETCH_TIMEOUT_MS });
+
+      const progressive = pickProgressiveMp4FromPiped(data);
+      if (progressive?.url) {
+        return {
+          videoUrl: progressive.url,
+          audioUrl: null,
+          title: safeTitle(data.title, `youtube-${videoId}`),
+          source: `piped:${base}`
+        };
+      }
+
+      const videoOnly = pickBestVideoOnlyMp4FromPiped(data);
+      const audio = pickBestAudioFromPiped(data);
+      if (videoOnly?.url && audio?.url) {
+        return {
+          videoUrl: videoOnly.url,
+          audioUrl: audio.url,
+          title: safeTitle(data.title, `youtube-${videoId}`),
+          source: `piped:${base}`
+        };
+      }
+    } catch (err) {
+      safeLog.warn('[YouTube][piped-mp4] instância falhou', {
+        instance: base,
+        message: err?.message
+      });
+    }
+  }
+  return null;
+}
+
+async function tryInvidiousInstancesMp4(videoId) {
+  for (const base of INVIDIOUS_API_INSTANCES) {
+    const endpoint = `${base.replace(/\/$/, '')}/api/v1/videos/${encodeURIComponent(videoId)}`;
+    try {
+      safeLog.info('[YouTube][invidious-mp4] tentando instância', { instance: base });
+      const data = await fetchJson(endpoint, { timeoutMs: FETCH_TIMEOUT_MS });
+
+      const progressive = pickProgressiveMp4FromInvidious(data);
+      if (progressive?.url) {
+        return {
+          videoUrl: progressive.url,
+          audioUrl: null,
+          title: safeTitle(data.title, `youtube-${videoId}`),
+          source: `invidious:${base}`
+        };
+      }
+
+      const videoOnly = pickBestVideoOnlyMp4FromInvidious(data);
+      const audio = pickBestAudioFromInvidious(data);
+      if (videoOnly?.url && audio?.url) {
+        return {
+          videoUrl: videoOnly.url,
+          audioUrl: audio.url,
+          title: safeTitle(data.title, `youtube-${videoId}`),
+          source: `invidious:${base}`
+        };
+      }
+    } catch (err) {
+      safeLog.warn('[YouTube][invidious-mp4] instância falhou', {
         instance: base,
         message: err?.message
       });
@@ -286,12 +416,122 @@ async function runPipedToMp3({ youtubeUrl, outputMp3Path }) {
   };
 }
 
+function downloadAndMergeToMp4(videoUrl, audioUrl, outputMp4Path) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve(true);
+    };
+
+    const watchdog = setTimeout(() => {
+      finish(new Error('Timeout ao remuxar streams em MP4.'));
+    }, DOWNLOAD_TIMEOUT_MS * 2);
+    watchdog.unref?.();
+
+    try {
+      const command = ffmpeg();
+      command.input(videoUrl).inputOptions([
+        '-user_agent',
+        USER_AGENT,
+        '-reconnect',
+        '1',
+        '-reconnect_streamed',
+        '1',
+        '-reconnect_delay_max',
+        '5'
+      ]);
+
+      if (audioUrl) {
+        command.input(audioUrl).inputOptions([
+          '-user_agent',
+          USER_AGENT,
+          '-reconnect',
+          '1',
+          '-reconnect_streamed',
+          '1',
+          '-reconnect_delay_max',
+          '5'
+        ]);
+      }
+
+      const outputOptions = ['-c', 'copy', '-movflags', '+faststart'];
+      if (audioUrl) {
+        outputOptions.push('-map', '0:v:0', '-map', '1:a:0', '-shortest');
+      }
+
+      command
+        .outputOptions(outputOptions)
+        .format('mp4')
+        .on('error', (err) => {
+          clearTimeout(watchdog);
+          finish(err);
+        })
+        .on('end', () => {
+          clearTimeout(watchdog);
+          finish();
+        })
+        .save(outputMp4Path);
+    } catch (err) {
+      clearTimeout(watchdog);
+      finish(err);
+    }
+  });
+}
+
+async function runPipedToMp4({ youtubeUrl, outputMp4Path }) {
+  const videoId = extractVideoId(youtubeUrl);
+  if (!videoId) {
+    const err = new Error('Não foi possível extrair o ID do vídeo do YouTube.');
+    err.code = 'PIPED_INVALID_URL';
+    throw err;
+  }
+
+  safeLog.info('[YouTube][piped-mp4] iniciando fallback piped/invidious para MP4', { videoId });
+
+  let resolved = await tryPipedInstancesMp4(videoId);
+  if (!resolved) {
+    resolved = await tryInvidiousInstancesMp4(videoId);
+  }
+
+  if (!resolved) {
+    const err = new Error('Nenhuma instância Piped/Invidious retornou vídeo MP4.');
+    err.code = 'PIPED_ALL_INSTANCES_FAILED';
+    throw err;
+  }
+
+  safeLog.info('[YouTube][piped-mp4] streams resolvidos, gerando MP4', {
+    source: resolved.source,
+    hasAudio: Boolean(resolved.audioUrl)
+  });
+
+  await downloadAndMergeToMp4(resolved.videoUrl, resolved.audioUrl, outputMp4Path);
+
+  if (!fs.existsSync(outputMp4Path)) {
+    const err = new Error('Falha ao gerar MP4 a partir de Piped/Invidious.');
+    err.code = 'PIPED_CONVERT_FAILED';
+    throw err;
+  }
+
+  return {
+    title: resolved.title,
+    source: resolved.source
+  };
+}
+
 module.exports = {
   runPipedToMp3,
+  runPipedToMp4,
   extractVideoId,
   _private: {
     pickBestAudioFromPiped,
     pickBestAudioFromInvidious,
+    pickProgressiveMp4FromPiped,
+    pickBestVideoOnlyMp4FromPiped,
+    pickProgressiveMp4FromInvidious,
+    pickBestVideoOnlyMp4FromInvidious,
     PIPED_API_INSTANCES,
     INVIDIOUS_API_INSTANCES
   }
