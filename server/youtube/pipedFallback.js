@@ -12,20 +12,30 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 
 const PIPED_API_INSTANCES = [
   'https://pipedapi.kavin.rocks',
-  'https://api.piped.yt',
   'https://pipedapi.adminforge.de',
-  'https://pipedapi.r4fo.com',
-  'https://pipedapi.leptons.xyz',
-  'https://pipedapi.darkness.services',
-  'https://pipedapi.drgns.space'
+  'https://api-piped.mha.fi',
+  'https://pipedapi.smnz.de',
+  'https://pipedapi.us.projectsegfau.lt',
+  'https://pipedapi.in.projectsegfau.lt',
+  'https://pipedapi.lunar.icu',
+  'https://pipedapi.syncpundit.io',
+  'https://pipedapi.qdi.fi',
+  'https://api.piped.privacydev.net',
+  'https://piapi.ggtyler.dev',
+  'https://pipedapi.reallyaweso.me'
 ];
 
 const INVIDIOUS_API_INSTANCES = [
+  'https://invidious.privacyredirect.com',
+  'https://invidious.jing.rocks',
+  'https://yt.cdaut.de',
+  'https://invidious.protokolla.fi',
+  'https://iv.melmac.space',
   'https://invidious.nerdvpn.de',
-  'https://yewtu.be',
-  'https://invidious.privacydev.net',
-  'https://inv.nadeko.net',
-  'https://invidious.fdn.fr'
+  'https://invidious.einfachzocken.eu',
+  'https://invidious.materialio.us',
+  'https://invidious.f5.si',
+  'https://yewtu.be'
 ];
 
 const FETCH_TIMEOUT_MS = 12_000;

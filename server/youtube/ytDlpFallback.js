@@ -94,10 +94,14 @@ const YT_USER_AGENT =
 
 // Player clients que normalmente conseguem furar o bot-challenge em IPs de servidor.
 // A ordem importa: começa pelos que NÃO exigem login/cookies (android_vr, tv_embedded, web_safari).
+// Inclui clients novos (tv, web_creator, mediaconnect) que raramente exigem PO Token.
 const YT_PLAYER_CLIENT_PROFILES = [
   'android_vr',
+  'tv',
   'tv_embedded',
+  'web_creator',
   'web_safari',
+  'mediaconnect',
   'mweb',
   'ios',
   'default'
@@ -139,7 +143,10 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl,
   ];
 
   if (playerClient) {
-    args.push('--extractor-args', `youtube:player_client=${playerClient}`);
+    args.push(
+      '--extractor-args',
+      `youtube:player_client=${playerClient};formats=missing_pot;player_skip=configs,webpage`
+    );
   }
 
   if (useCookies && cookieFilePath) {
@@ -188,7 +195,10 @@ function buildYtDlpArgsMp4({ safeVideoUrl, outputMp4Path, cookieFilePath, proxyU
   ];
 
   if (playerClient) {
-    args.push('--extractor-args', `youtube:player_client=${playerClient}`);
+    args.push(
+      '--extractor-args',
+      `youtube:player_client=${playerClient};formats=missing_pot;player_skip=configs,webpage`
+    );
   }
 
   if (useCookies && cookieFilePath) {

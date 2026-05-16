@@ -12,6 +12,7 @@ const { safeLog, redactString } = require('./utils/safeLog');
 const { normalizeYoutubeCookie, assertValidCookieHeader } = require('./utils/normalizeYoutubeCookie');
 const { runYtDlpToMp3, runYtDlpToMp4 } = require('./youtube/ytDlpFallback');
 const { runPipedToMp3, runPipedToMp4 } = require('./youtube/pipedFallback');
+const { runCobaltToMp3, runCobaltToMp4 } = require('./youtube/cobaltFallback');
 
 const YT_HEADERS_TV = {
   'User-Agent':
@@ -389,6 +390,8 @@ function createApp(options = {}) {
   const runYtDlpToMp4Fn = options.runYtDlpToMp4 || runYtDlpToMp4;
   const runPipedToMp3Fn = options.runPipedToMp3 || runPipedToMp3;
   const runPipedToMp4Fn = options.runPipedToMp4 || runPipedToMp4;
+  const runCobaltToMp3Fn = options.runCobaltToMp3 || runCobaltToMp3;
+  const runCobaltToMp4Fn = options.runCobaltToMp4 || runCobaltToMp4;
 
   ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -577,7 +580,7 @@ function createApp(options = {}) {
           safeLog('log', '[YouTube] yt-dlp MP4 concluído.');
         } catch (fallbackError) {
           ytDlpFatalError = fallbackError;
-          safeLog.warn('[YouTube] yt-dlp MP4 falhou. Tentando Piped/Invidious MP4.', {
+          safeLog.warn('[YouTube] yt-dlp MP4 falhou. Tentando Cobalt MP4.', {
             code: fallbackError?.code,
             exitCode: fallbackError?.exitCode,
             message: sanitizeLogText(fallbackError?.message),
@@ -592,17 +595,31 @@ function createApp(options = {}) {
           }
 
           try {
-            const pipedResult = await runPipedToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
-            if (pipedResult?.title) {
-              titleForFile = pipedResult.title;
-            }
+            const cobaltResult = await runCobaltToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
+            if (cobaltResult?.title) titleForFile = cobaltResult.title;
             ytDlpFatalError = null;
-            safeLog.info('[YouTube] Piped/Invidious MP4 fallback concluído.', { source: pipedResult?.source });
-          } catch (pipedError) {
-            safeLog.warn('[YouTube] Piped/Invidious MP4 também falhou.', {
-              code: pipedError?.code,
-              message: sanitizeLogText(pipedError?.message)
+            safeLog.info('[YouTube] Cobalt MP4 fallback concluído.', { source: cobaltResult?.source });
+          } catch (cobaltError) {
+            safeLog.warn('[YouTube] Cobalt MP4 falhou. Tentando Piped/Invidious MP4.', {
+              code: cobaltError?.code,
+              message: sanitizeLogText(cobaltError?.message)
             });
+          }
+
+          if (ytDlpFatalError) {
+            try {
+              const pipedResult = await runPipedToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
+              if (pipedResult?.title) {
+                titleForFile = pipedResult.title;
+              }
+              ytDlpFatalError = null;
+              safeLog.info('[YouTube] Piped/Invidious MP4 fallback concluído.', { source: pipedResult?.source });
+            } catch (pipedError) {
+              safeLog.warn('[YouTube] Piped/Invidious MP4 também falhou.', {
+                code: pipedError?.code,
+                message: sanitizeLogText(pipedError?.message)
+              });
+            }
           }
 
           if (ytDlpFatalError) {
@@ -709,7 +726,7 @@ function createApp(options = {}) {
       safeLog('log', '[YouTube] yt-dlp fallback concluído.');
       return { ok: true };
     } catch (fallbackError) {
-      safeLog.warn('[YouTube] fallback yt-dlp também falhou. Tentando Piped/Invidious.', {
+      safeLog.warn('[YouTube] fallback yt-dlp falhou. Tentando Cobalt.', {
         code: fallbackError?.code,
         exitCode: fallbackError?.exitCode,
         message: sanitizeLogText(fallbackError?.message),
@@ -717,6 +734,17 @@ function createApp(options = {}) {
       });
 
       ytDlpFatalError = fallbackError;
+    }
+
+    try {
+      const cobaltResult = await runCobaltToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath });
+      safeLog.info('[YouTube] Cobalt fallback concluído.', { source: cobaltResult?.source });
+      return { ok: true, title: cobaltResult?.title };
+    } catch (cobaltError) {
+      safeLog.warn('[YouTube] Cobalt falhou. Tentando Piped/Invidious.', {
+        code: cobaltError?.code,
+        message: sanitizeLogText(cobaltError?.message)
+      });
     }
 
     try {
