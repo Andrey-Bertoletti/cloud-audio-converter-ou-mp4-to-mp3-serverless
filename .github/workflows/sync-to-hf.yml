@@ -1,0 +1,25 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main] # O deploy roda quando você der push na branch main
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "bot@example.com"
+          git config --global user.name "GitHub Action Auto-Sync"
+          # Substitua 'SEU_USER' pelo seu nome de usuário do Hugging Face 
+          # Substitua 'youtube-converter' pelo nome do seu Space, se for diferente
+          git remote add hf https://SEU_USER:$HF_TOKEN@huggingface.co/spaces/SEU_USER/youtube-converter
+          git push hf main --force
