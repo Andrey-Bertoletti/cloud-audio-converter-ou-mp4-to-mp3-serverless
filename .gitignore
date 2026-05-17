@@ -7,3 +7,10 @@ cookies.json
 cookies.txt
 tmp_cookie_diag.js
 dist/
+.claude/
+*.mp3
+*.mp4
+*.webm
+*.wav
+*.aac
+*.m4a

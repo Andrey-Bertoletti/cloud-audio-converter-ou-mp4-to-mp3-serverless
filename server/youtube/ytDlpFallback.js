@@ -5,6 +5,13 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const ffmpegPath = require('ffmpeg-static');
+let ffprobePath = '';
+try {
+  ffprobePath = require('ffprobe-static').path;
+} catch (_) {
+  ffprobePath = '';
+}
+const path_mod = require('path');
 const { safeLog } = require('../utils/safeLog');
 
 const execFileAsync = promisify(execFile);
@@ -145,7 +152,7 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl,
   if (playerClient) {
     args.push(
       '--extractor-args',
-      `youtube:player_client=${playerClient};formats=missing_pot;player_skip=configs,webpage`
+      `youtube:player_client=${playerClient};formats=missing_pot`
     );
   }
 
@@ -197,7 +204,7 @@ function buildYtDlpArgsMp4({ safeVideoUrl, outputMp4Path, cookieFilePath, proxyU
   if (playerClient) {
     args.push(
       '--extractor-args',
-      `youtube:player_client=${playerClient};formats=missing_pot;player_skip=configs,webpage`
+      `youtube:player_client=${playerClient};formats=missing_pot`
     );
   }
 
@@ -604,10 +611,22 @@ function runYtDlp(args, { timeoutMs = 120000, ytdlpPath } = {}) {
 
   const cmd = normalizeExecutablePath(ytdlpPath || resolveYtDlpPath());
 
+  // Garantir que ffmpeg e ffprobe estejam no PATH para yt-dlp encontrar.
+  const extraPathDirs = [];
+  if (ffmpegPath) extraPathDirs.push(path_mod.dirname(ffmpegPath));
+  if (ffprobePath) extraPathDirs.push(path_mod.dirname(ffprobePath));
+  const isWin = process.platform === 'win32';
+  const pathSep = isWin ? ';' : ':';
+  const childEnv = Object.assign({}, process.env);
+  if (extraPathDirs.length > 0) {
+    childEnv.PATH = extraPathDirs.join(pathSep) + pathSep + (childEnv.PATH || '');
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      windowsHide: true
+      windowsHide: true,
+      env: childEnv
     });
 
     let stdout = '';
@@ -869,11 +888,19 @@ async function runYtDlpDownload({
         sessionRejectedSeen = true;
       }
 
+      const stderrSnippet = String(result.err?.stderr || '')
+        .split(/\r?\n/)
+        .filter((l) => /error|warning|\[youtube\]|sign in/i.test(l))
+        .slice(-4)
+        .join(' | ')
+        .slice(0, 400);
+
       safeLog.warn('[YouTube][yt-dlp] Tentativa falhou, tentando próximo perfil', {
         playerClient: plan.playerClient,
         useCookies: plan.useCookies,
         code: result.err?.code,
-        exitCode: result.err?.exitCode
+        exitCode: result.err?.exitCode,
+        stderrSnippet
       });
     }
 

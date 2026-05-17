@@ -13,6 +13,7 @@ const { normalizeYoutubeCookie, assertValidCookieHeader } = require('./utils/nor
 const { runYtDlpToMp3, runYtDlpToMp4 } = require('./youtube/ytDlpFallback');
 const { runPipedToMp3, runPipedToMp4 } = require('./youtube/pipedFallback');
 const { runCobaltToMp3, runCobaltToMp4 } = require('./youtube/cobaltFallback');
+const { runYoutubeiToMp3, runYoutubeiToMp4 } = require('./youtube/youtubeiFallback');
 
 const YT_HEADERS_TV = {
   'User-Agent':
@@ -392,6 +393,8 @@ function createApp(options = {}) {
   const runPipedToMp4Fn = options.runPipedToMp4 || runPipedToMp4;
   const runCobaltToMp3Fn = options.runCobaltToMp3 || runCobaltToMp3;
   const runCobaltToMp4Fn = options.runCobaltToMp4 || runCobaltToMp4;
+  const runYoutubeiToMp3Fn = options.runYoutubeiToMp3 || runYoutubeiToMp3;
+  const runYoutubeiToMp4Fn = options.runYoutubeiToMp4 || runYoutubeiToMp4;
 
   ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -595,15 +598,29 @@ function createApp(options = {}) {
           }
 
           try {
-            const cobaltResult = await runCobaltToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
-            if (cobaltResult?.title) titleForFile = cobaltResult.title;
+            const ytiResult = await runYoutubeiToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath, cookie: cookieHeader });
+            if (ytiResult?.title) titleForFile = ytiResult.title;
             ytDlpFatalError = null;
-            safeLog.info('[YouTube] Cobalt MP4 fallback concluído.', { source: cobaltResult?.source });
-          } catch (cobaltError) {
-            safeLog.warn('[YouTube] Cobalt MP4 falhou. Tentando Piped/Invidious MP4.', {
-              code: cobaltError?.code,
-              message: sanitizeLogText(cobaltError?.message)
+            safeLog.info('[YouTube] youtubei.js MP4 fallback concluído.', { source: ytiResult?.source });
+          } catch (ytiError) {
+            safeLog.warn('[YouTube] youtubei.js MP4 falhou. Tentando Cobalt MP4.', {
+              code: ytiError?.code,
+              message: sanitizeLogText(ytiError?.message)
             });
+          }
+
+          if (ytDlpFatalError) {
+            try {
+              const cobaltResult = await runCobaltToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
+              if (cobaltResult?.title) titleForFile = cobaltResult.title;
+              ytDlpFatalError = null;
+              safeLog.info('[YouTube] Cobalt MP4 fallback concluído.', { source: cobaltResult?.source });
+            } catch (cobaltError) {
+              safeLog.warn('[YouTube] Cobalt MP4 falhou. Tentando Piped/Invidious MP4.', {
+                code: cobaltError?.code,
+                message: sanitizeLogText(cobaltError?.message)
+              });
+            }
           }
 
           if (ytDlpFatalError) {
@@ -726,7 +743,7 @@ function createApp(options = {}) {
       safeLog('log', '[YouTube] yt-dlp fallback concluído.');
       return { ok: true };
     } catch (fallbackError) {
-      safeLog.warn('[YouTube] fallback yt-dlp falhou. Tentando Cobalt.', {
+      safeLog.warn('[YouTube] fallback yt-dlp falhou. Tentando youtubei.js.', {
         code: fallbackError?.code,
         exitCode: fallbackError?.exitCode,
         message: sanitizeLogText(fallbackError?.message),
@@ -734,6 +751,17 @@ function createApp(options = {}) {
       });
 
       ytDlpFatalError = fallbackError;
+    }
+
+    try {
+      const ytiResult = await runYoutubeiToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookie: cookieHeader });
+      safeLog.info('[YouTube] youtubei.js fallback concluído.', { source: ytiResult?.source });
+      return { ok: true, title: ytiResult?.title };
+    } catch (ytiError) {
+      safeLog.warn('[YouTube] youtubei.js falhou. Tentando Cobalt.', {
+        code: ytiError?.code,
+        message: sanitizeLogText(ytiError?.message)
+      });
     }
 
     try {
