@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Entrypoint do container: sobe Cloudflare WARP (HTTP proxy local) antes do Node.
 # WARP dá ao container um IP de saída que o YouTube trata como "cliente", não datacenter.
+#
+# Estratégia: o endpoint UDP padrão (2408) costuma ser bloqueado por firewalls de
+# provedores (HF Spaces inclusive). Cloudflare aceita o mesmo handshake WireGuard
+# em várias portas UDP — tentamos cada uma até alguma confirmar warp=on.
 set -u
 
 WARP_DIR="${WARP_DIR:-/tmp/warp}"
 WARP_PORT="${WARP_PORT:-40001}"
 WARP_HEALTHCHECK_URL="${WARP_HEALTHCHECK_URL:-https://www.cloudflare.com/cdn-cgi/trace}"
-WARP_MAX_WAIT_SECONDS="${WARP_MAX_WAIT_SECONDS:-30}"
+WARP_WAIT_PER_PORT="${WARP_WAIT_PER_PORT:-12}"
+# Portas a tentar para o endpoint do WARP. 2408 é o default; 443/500/1701/4500
+# são alternativas que o servidor Cloudflare aceita e que costumam estar abertas.
+WARP_PORTS_TO_TRY="${WARP_PORTS_TO_TRY:-2408 443 500 1701 4500}"
 
 mkdir -p "$WARP_DIR"
 cd "$WARP_DIR" || { echo "[start] não consegui acessar $WARP_DIR"; exec node /opt/app/server/index.js; }
@@ -36,46 +43,71 @@ if [ ! -f wgcf-profile.conf ]; then
   fi
 fi
 
-# 3) Montar wireproxy.conf — usa o WireGuard do WARP em userspace e expõe HTTP proxy.
-cat > wireproxy.conf <<EOF
-$(awk '
-  /^\[Interface\]/ { in_iface=1; print; next }
-  /^\[Peer\]/ { in_iface=0; print; next }
-  in_iface && /^DNS/ { next }
-  in_iface && /^MTU/ { next }
-  { print }
-' wgcf-profile.conf)
+# Função: monta wireproxy.conf trocando a porta UDP do Endpoint para $1.
+build_wireproxy_conf() {
+  local port="$1"
+  awk -v port="$port" '
+    BEGIN { in_iface=0 }
+    /^\[Interface\]/ { in_iface=1; print; next }
+    /^\[Peer\]/ { in_iface=0; print; next }
+    in_iface && /^DNS/ { next }
+    in_iface && /^MTU/ { next }
+    /^Endpoint *=/ {
+      # Substitui a porta após o último ":"
+      sub(/:[0-9]+$/, ":" port)
+      print
+      next
+    }
+    { print }
+  ' wgcf-profile.conf > wireproxy.conf
+  cat >> wireproxy.conf <<EOF
 
 [http]
 BindAddress = 127.0.0.1:${WARP_PORT}
 EOF
+}
 
-# 4) Subir wireproxy em background.
-echo "[start][warp] subindo wireproxy em 127.0.0.1:${WARP_PORT}..."
-/usr/local/bin/wireproxy -c "$WARP_DIR/wireproxy.conf" >/tmp/wireproxy.log 2>&1 &
-WIREPROXY_PID=$!
+# Função: tenta subir wireproxy com a porta atual e valida com healthcheck.
+try_port() {
+  local port="$1"
+  echo "[start][warp] tentando endpoint UDP/$port..."
+  build_wireproxy_conf "$port"
 
-# 5) Esperar o proxy responder.
+  /usr/local/bin/wireproxy -c "$WARP_DIR/wireproxy.conf" >/tmp/wireproxy.log 2>&1 &
+  local pid=$!
+
+  for i in $(seq 1 "$WARP_WAIT_PER_PORT"); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      echo "[start][warp] wireproxy morreu na porta $port. log:"
+      sed -e 's/^/[start][warp][proxy] /' /tmp/wireproxy.log | tail -10
+      return 1
+    fi
+    if curl -fsS --max-time 3 --proxy "http://127.0.0.1:${WARP_PORT}" "$WARP_HEALTHCHECK_URL" >/tmp/warp-trace.txt 2>/dev/null; then
+      if grep -q '^warp=on' /tmp/warp-trace.txt; then
+        echo "[start][warp] ✓ WARP ativo via UDP/$port (IP de saída via Cloudflare)."
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+
+  echo "[start][warp] UDP/$port não passou healthcheck — matando."
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 1
+}
+
+# 3) Iterar portas até alguma funcionar.
 ready=0
-for i in $(seq 1 "$WARP_MAX_WAIT_SECONDS"); do
-  if ! kill -0 "$WIREPROXY_PID" 2>/dev/null; then
-    echo "[start][warp] wireproxy morreu — sobe sem proxy. log:"
-    sed -e 's/^/[start][warp][proxy] /' /tmp/wireproxy.log || true
+for port in $WARP_PORTS_TO_TRY; do
+  if try_port "$port"; then
+    ready=1
     break
   fi
-  if curl -fsS --max-time 3 --proxy "http://127.0.0.1:${WARP_PORT}" "$WARP_HEALTHCHECK_URL" >/tmp/warp-trace.txt 2>/dev/null; then
-    if grep -q '^warp=on' /tmp/warp-trace.txt; then
-      echo "[start][warp] ✓ WARP ativo (IP de saída via Cloudflare)."
-      ready=1
-      break
-    fi
-  fi
-  sleep 1
 done
 
 if [ "$ready" != "1" ]; then
-  echo "[start][warp] WARP não confirmou em ${WARP_MAX_WAIT_SECONDS}s — Node sobe sem YOUTUBE_PROXY_URL."
-  kill "$WIREPROXY_PID" 2>/dev/null || true
+  echo "[start][warp] Nenhuma porta UDP funcionou (firewall bloqueando). Node sobe sem proxy."
   unset YOUTUBE_PROXY_URL
 fi
 
