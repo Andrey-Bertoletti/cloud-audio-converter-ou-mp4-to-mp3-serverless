@@ -10,12 +10,14 @@ const { safeLog } = require('../utils/safeLog');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Cobalt v10+ instances. A oficial 'api.cobalt.tools' está viva mas REMOVEU youtube
-// dos serviços (questão legal) — tentamos mesmo assim e fazemos skip se o vídeo
-// retornar "service not supported".
-// Override com env COBALT_INSTANCES (lista separada por vírgula).
+// Cobalt v10+ instances community-run. A oficial 'api.cobalt.tools' REMOVEU youtube
+// dos serviços (DMCA), então não vale tentar. As de baixo são instâncias da comunidade
+// confirmadas servindo YouTube em maio/2026 (lista viva: instances.cobalt.best).
+// Override com env COBALT_INSTANCES (lista separada por vírgula/espaço).
 const COBALT_DEFAULT_INSTANCES = [
-  'https://api.cobalt.tools'
+  'https://cobalt.meowing.de',
+  'https://cobalt-api.kwiatekmiki.com',
+  'https://dwnld.nichind.dev'
 ];
 
 function readCobaltInstances() {

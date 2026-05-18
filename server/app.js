@@ -557,49 +557,70 @@ function createApp(options = {}) {
       let titleForFile = `youtube-${timestamp}`;
       tempFilePath = path.join(os.tmpdir(), `convert-${timestamp}.${extension}`);
 
+      // Em IPs datacenter sem proxy residencial/WARP, ytdl-core e yt-dlp falham
+      // 100% das vezes com bot-challenge. Pula direto pros fallbacks externos
+      // (Cobalt/Piped) que extraem pelo IP deles.
+      const skipDirectExtraction = !proxyUrl && process.env.YOUTUBE_FORCE_DIRECT !== '1';
+
       if (!isMp4) {
-        safeLog('log', '[YouTube] Tentando conversão MP3 com ytdl-core...');
-        try {
-          const info = await getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeader, state });
-          titleForFile = info?.videoDetails?.title || titleForFile;
-          await convertWithYtdlCore({ ytdl, youtubeUrl, info, agent, cookieHeader, tempFilePath });
-          safeLog('log', '[YouTube] ytdl-core concluído.');
-        } catch (error) {
-          if (isInvalidCookieHeaderError(error)) {
-            return res.status(500).json({
-              error: 'YOUTUBE_COOKIE_INVALID',
-              message: 'O cookie do YouTube está em formato inválido no servidor.'
-            });
-          }
-
-          if (!isYoutubeBotChallenge(error)) throw error;
-
-          if (!isYtDlpFallbackEnabled()) {
-            const retryAfterSeconds = Math.max(
-              1,
-              Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
-            );
-            return botChallengeResponse(res, retryAfterSeconds);
-          }
-
-          safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
-
-          const fallbackResult = await runMp3FallbackChain({
-            youtubeUrl,
-            tempFilePath,
-            rawCookieInput,
-            cookieHeader,
-            proxyUrl
-          });
-
+        if (skipDirectExtraction) {
+          safeLog('log', '[YouTube] Sem proxy: pulando ytdl-core/yt-dlp, indo direto pros fallbacks externos.');
+          const fallbackResult = await runExternalOnlyMp3Chain({ youtubeUrl, tempFilePath });
           if (!fallbackResult.ok) {
             return respondWithFallbackError(res, fallbackResult.error);
           }
+          if (fallbackResult.title) titleForFile = fallbackResult.title;
+        } else {
+          safeLog('log', '[YouTube] Tentando conversão MP3 com ytdl-core...');
+          try {
+            const info = await getYouTubeInfoWithFallback({ ytdl, youtubeUrl, agent, cookieHeader, state });
+            titleForFile = info?.videoDetails?.title || titleForFile;
+            await convertWithYtdlCore({ ytdl, youtubeUrl, info, agent, cookieHeader, tempFilePath });
+            safeLog('log', '[YouTube] ytdl-core concluído.');
+          } catch (error) {
+            if (isInvalidCookieHeaderError(error)) {
+              return res.status(500).json({
+                error: 'YOUTUBE_COOKIE_INVALID',
+                message: 'O cookie do YouTube está em formato inválido no servidor.'
+              });
+            }
 
-          if (fallbackResult.title) {
-            titleForFile = fallbackResult.title;
+            if (!isYoutubeBotChallenge(error)) throw error;
+
+            if (!isYtDlpFallbackEnabled()) {
+              const retryAfterSeconds = Math.max(
+                1,
+                Number.parseInt(String(error?.retryAfterSeconds ?? ''), 10) || YT_BOT_CHALLENGE_RETRY_AFTER_SECONDS
+              );
+              return botChallengeResponse(res, retryAfterSeconds);
+            }
+
+            safeLog.warn('[YouTube] ytdl-core bloqueado por anti-bot. Tentando fallback yt-dlp.');
+
+            const fallbackResult = await runMp3FallbackChain({
+              youtubeUrl,
+              tempFilePath,
+              rawCookieInput,
+              cookieHeader,
+              proxyUrl
+            });
+
+            if (!fallbackResult.ok) {
+              return respondWithFallbackError(res, fallbackResult.error);
+            }
+
+            if (fallbackResult.title) {
+              titleForFile = fallbackResult.title;
+            }
           }
         }
+      } else if (skipDirectExtraction) {
+        safeLog('log', '[YouTube] Sem proxy: pulando yt-dlp MP4, indo direto pros fallbacks externos.');
+        const result = await runExternalOnlyMp4Chain({ youtubeUrl, tempFilePath, cookieHeader });
+        if (!result.ok) {
+          return respondWithFallbackError(res, result.error);
+        }
+        if (result.title) titleForFile = result.title;
       } else {
         safeLog('log', '[YouTube] Iniciando conversão MP4 (yt-dlp + Piped fallback)...');
 
@@ -759,6 +780,92 @@ function createApp(options = {}) {
         }
       }
     }
+  }
+
+  // Chain "external only": pula yt-dlp/ytdl-core (que falham em IP datacenter)
+  // e usa só Cobalt + Piped + youtubei.js. Usado quando o servidor não tem proxy.
+  async function runExternalOnlyMp3Chain({ youtubeUrl, tempFilePath, cookieHeader }) {
+    let lastError;
+
+    try {
+      const cobaltResult = await runCobaltToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath });
+      safeLog.info('[YouTube] Cobalt MP3 OK.', { source: cobaltResult?.source });
+      return { ok: true, title: cobaltResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] Cobalt MP3 falhou. Tentando Piped.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    try {
+      const pipedResult = await runPipedToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath });
+      safeLog.info('[YouTube] Piped MP3 OK.', { source: pipedResult?.source });
+      return { ok: true, title: pipedResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] Piped MP3 falhou. Tentando youtubei.js.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    try {
+      const ytiResult = await runYoutubeiToMp3Fn({ youtubeUrl, outputMp3Path: tempFilePath, cookie: cookieHeader });
+      safeLog.info('[YouTube] youtubei.js MP3 OK.', { source: ytiResult?.source });
+      return { ok: true, title: ytiResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] youtubei.js MP3 falhou — todos os fallbacks externos esgotados.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    return { ok: false, error: lastError };
+  }
+
+  async function runExternalOnlyMp4Chain({ youtubeUrl, tempFilePath, cookieHeader }) {
+    let lastError;
+
+    try {
+      const cobaltResult = await runCobaltToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
+      safeLog.info('[YouTube] Cobalt MP4 OK.', { source: cobaltResult?.source });
+      return { ok: true, title: cobaltResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] Cobalt MP4 falhou. Tentando Piped.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    try {
+      const pipedResult = await runPipedToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath });
+      safeLog.info('[YouTube] Piped MP4 OK.', { source: pipedResult?.source });
+      return { ok: true, title: pipedResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] Piped MP4 falhou. Tentando youtubei.js.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    try {
+      const ytiResult = await runYoutubeiToMp4Fn({ youtubeUrl, outputMp4Path: tempFilePath, cookie: cookieHeader });
+      safeLog.info('[YouTube] youtubei.js MP4 OK.', { source: ytiResult?.source });
+      return { ok: true, title: ytiResult?.title };
+    } catch (err) {
+      lastError = err;
+      safeLog.warn('[YouTube] youtubei.js MP4 falhou — todos os fallbacks externos esgotados.', {
+        code: err?.code,
+        message: sanitizeLogText(err?.message)
+      });
+    }
+
+    return { ok: false, error: lastError };
   }
 
   async function runMp3FallbackChain({ youtubeUrl, tempFilePath, rawCookieInput, cookieHeader, proxyUrl }) {
