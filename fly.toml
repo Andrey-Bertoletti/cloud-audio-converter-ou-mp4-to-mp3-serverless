@@ -1,0 +1,42 @@
+# Configuração fly.io. Substitua o nome do app na primeira execução via `fly launch`.
+# Mesmo Dockerfile do HF — nenhuma alteração de código necessária pra rodar aqui.
+app = "cloudaudio"
+primary_region = "gru"
+
+[build]
+
+[env]
+  # Mesmas vars que o Dockerfile já define; declaradas aqui pra visibilidade.
+  NODE_ENV = "production"
+  PORT = "7860"
+  YTDLP_PATH = "/opt/app/.bin/yt-dlp"
+  HOME = "/tmp"
+  WARP_DIR = "/tmp/warp"
+  WARP_PORT = "40001"
+  YOUTUBE_PROXY_URL = "http://127.0.0.1:40001"
+
+[http_service]
+  internal_port = 7860
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
