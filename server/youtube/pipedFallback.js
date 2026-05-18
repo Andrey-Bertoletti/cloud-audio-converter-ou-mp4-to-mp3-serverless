@@ -10,33 +10,36 @@ const { safeLog } = require('../utils/safeLog');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-const PIPED_API_INSTANCES = [
-  'https://pipedapi.kavin.rocks',
-  'https://pipedapi.adminforge.de',
-  'https://api-piped.mha.fi',
-  'https://pipedapi.smnz.de',
-  'https://pipedapi.us.projectsegfau.lt',
-  'https://pipedapi.in.projectsegfau.lt',
-  'https://pipedapi.lunar.icu',
-  'https://pipedapi.syncpundit.io',
-  'https://pipedapi.qdi.fi',
-  'https://api.piped.privacydev.net',
-  'https://piapi.ggtyler.dev',
-  'https://pipedapi.reallyaweso.me'
+// Lista atualizada (2026-05): a maioria das instâncias Piped/Invidious históricas
+// foi desligada ou está rate-limiting datacenters. Mantemos só as confirmadamente
+// vivas e respondendo JSON válido. Override com PIPED_INSTANCES / INVIDIOUS_INSTANCES.
+const PIPED_DEFAULT_INSTANCES = [
+  'https://api.piped.private.coffee'
 ];
 
-const INVIDIOUS_API_INSTANCES = [
-  'https://invidious.privacyredirect.com',
-  'https://invidious.jing.rocks',
-  'https://yt.cdaut.de',
-  'https://invidious.protokolla.fi',
-  'https://iv.melmac.space',
-  'https://invidious.nerdvpn.de',
-  'https://invidious.einfachzocken.eu',
-  'https://invidious.materialio.us',
-  'https://invidious.f5.si',
-  'https://yewtu.be'
+const INVIDIOUS_DEFAULT_INSTANCES = [
+  'https://inv.thepixora.com',
+  'https://invidious.nerdvpn.de'
 ];
+
+function parseInstanceList(envValue, fallback) {
+  const raw = String(envValue || '').trim();
+  if (!raw) return fallback;
+  const parsed = raw
+    .split(/[\s,]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => x.replace(/\/+$/, ''));
+  return parsed.length > 0 ? parsed : fallback;
+}
+
+function readPipedInstances() {
+  return parseInstanceList(process.env.PIPED_INSTANCES, PIPED_DEFAULT_INSTANCES);
+}
+
+function readInvidiousInstances() {
+  return parseInstanceList(process.env.INVIDIOUS_INSTANCES, INVIDIOUS_DEFAULT_INSTANCES);
+}
 
 const FETCH_TIMEOUT_MS = 12_000;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
@@ -223,7 +226,7 @@ function safeTitle(rawTitle, fallback) {
 }
 
 async function tryPipedInstances(videoId) {
-  for (const base of PIPED_API_INSTANCES) {
+  for (const base of readPipedInstances()) {
     const endpoint = `${base.replace(/\/$/, '')}/streams/${encodeURIComponent(videoId)}`;
     try {
       safeLog.info('[YouTube][piped] tentando instância', { instance: base });
@@ -247,7 +250,7 @@ async function tryPipedInstances(videoId) {
 }
 
 async function tryInvidiousInstances(videoId) {
-  for (const base of INVIDIOUS_API_INSTANCES) {
+  for (const base of readInvidiousInstances()) {
     const endpoint = `${base.replace(/\/$/, '')}/api/v1/videos/${encodeURIComponent(videoId)}`;
     try {
       safeLog.info('[YouTube][invidious] tentando instância', { instance: base });
@@ -271,7 +274,7 @@ async function tryInvidiousInstances(videoId) {
 }
 
 async function tryPipedInstancesMp4(videoId) {
-  for (const base of PIPED_API_INSTANCES) {
+  for (const base of readPipedInstances()) {
     const endpoint = `${base.replace(/\/$/, '')}/streams/${encodeURIComponent(videoId)}`;
     try {
       safeLog.info('[YouTube][piped-mp4] tentando instância', { instance: base });
@@ -308,7 +311,7 @@ async function tryPipedInstancesMp4(videoId) {
 }
 
 async function tryInvidiousInstancesMp4(videoId) {
-  for (const base of INVIDIOUS_API_INSTANCES) {
+  for (const base of readInvidiousInstances()) {
     const endpoint = `${base.replace(/\/$/, '')}/api/v1/videos/${encodeURIComponent(videoId)}`;
     try {
       safeLog.info('[YouTube][invidious-mp4] tentando instância', { instance: base });
@@ -542,7 +545,9 @@ module.exports = {
     pickBestVideoOnlyMp4FromPiped,
     pickProgressiveMp4FromInvidious,
     pickBestVideoOnlyMp4FromInvidious,
-    PIPED_API_INSTANCES,
-    INVIDIOUS_API_INSTANCES
+    PIPED_DEFAULT_INSTANCES,
+    INVIDIOUS_DEFAULT_INSTANCES,
+    readPipedInstances,
+    readInvidiousInstances
   }
 };

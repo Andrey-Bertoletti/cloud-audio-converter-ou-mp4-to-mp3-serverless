@@ -13,6 +13,7 @@ try {
 }
 const path_mod = require('path');
 const { safeLog } = require('../utils/safeLog');
+const poTokenManager = require('./poTokenManager');
 
 const execFileAsync = promisify(execFile);
 
@@ -114,7 +115,59 @@ const YT_PLAYER_CLIENT_PROFILES = [
   'default'
 ];
 
-function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl, playerClient, useCookies = true }) {
+// Quando há PO Token configurado, esses clients exigem PO Token e funcionam mesmo
+// em IPs de datacenter (Render, Vercel, AWS). Devem ser priorizados.
+const YT_PLAYER_CLIENT_PROFILES_WITH_PO_TOKEN = [
+  'mweb',
+  'web',
+  'web_embedded',
+  'android_vr',
+  'tv',
+  'tv_embedded',
+  'web_creator',
+  'web_safari',
+  'mediaconnect',
+  'ios',
+  'default'
+];
+
+function readYoutubePoToken() {
+  return String(
+    process.env.YOUTUBE_PO_TOKEN ||
+    process.env.YT_PO_TOKEN ||
+    process.env.YOUTUBE_POT ||
+    ''
+  ).trim();
+}
+
+function readYoutubeVisitorData() {
+  return String(
+    process.env.YOUTUBE_VISITOR_DATA ||
+    process.env.YT_VISITOR_DATA ||
+    ''
+  ).trim();
+}
+
+// Constrói o valor de --extractor-args incluindo PO Token quando configurado.
+// Formato yt-dlp: youtube:player_client=CLIENT;po_token=CLIENT.gvs+TOKEN;visitor_data=DATA
+function buildExtractorArgsValue({ playerClient, poToken, visitorData, allowMissingPot }) {
+  const parts = [];
+
+  if (playerClient) parts.push(`player_client=${playerClient}`);
+
+  if (poToken) {
+    // Vincula o PO Token ao client+contexto gvs (Google Video Server) — formato exigido pelo yt-dlp.
+    parts.push(`po_token=${playerClient || 'mweb'}.gvs+${poToken}`);
+    if (visitorData) parts.push(`visitor_data=${visitorData}`);
+  } else if (allowMissingPot) {
+    // Sem PO Token, pede ao yt-dlp para aceitar formatos que normalmente o exigem.
+    parts.push('formats=missing_pot');
+  }
+
+  return parts.join(';');
+}
+
+function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl, playerClient, useCookies = true, poTokenOverride, visitorDataOverride }) {
   const base = outputMp3Path.endsWith('.mp3') ? outputMp3Path.slice(0, -4) : outputMp3Path;
   const outTemplate = `${base}.%(ext)s`;
 
@@ -150,10 +203,13 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl,
   ];
 
   if (playerClient) {
-    args.push(
-      '--extractor-args',
-      `youtube:player_client=${playerClient};formats=missing_pot`
-    );
+    const extractorArgs = buildExtractorArgsValue({
+      playerClient,
+      poToken: poTokenOverride !== undefined ? poTokenOverride : readYoutubePoToken(),
+      visitorData: visitorDataOverride !== undefined ? visitorDataOverride : readYoutubeVisitorData(),
+      allowMissingPot: true
+    });
+    args.push('--extractor-args', `youtube:${extractorArgs}`);
   }
 
   if (useCookies && cookieFilePath) {
@@ -167,7 +223,7 @@ function buildYtDlpArgs({ safeVideoUrl, outputMp3Path, cookieFilePath, proxyUrl,
   return args;
 }
 
-function buildYtDlpArgsMp4({ safeVideoUrl, outputMp4Path, cookieFilePath, proxyUrl, playerClient, useCookies = true }) {
+function buildYtDlpArgsMp4({ safeVideoUrl, outputMp4Path, cookieFilePath, proxyUrl, playerClient, useCookies = true, poTokenOverride, visitorDataOverride }) {
   const base = outputMp4Path.endsWith('.mp4') ? outputMp4Path.slice(0, -4) : outputMp4Path;
   const outTemplate = `${base}.%(ext)s`;
 
@@ -202,10 +258,13 @@ function buildYtDlpArgsMp4({ safeVideoUrl, outputMp4Path, cookieFilePath, proxyU
   ];
 
   if (playerClient) {
-    args.push(
-      '--extractor-args',
-      `youtube:player_client=${playerClient};formats=missing_pot`
-    );
+    const extractorArgs = buildExtractorArgsValue({
+      playerClient,
+      poToken: poTokenOverride !== undefined ? poTokenOverride : readYoutubePoToken(),
+      visitorData: visitorDataOverride !== undefined ? visitorDataOverride : readYoutubeVisitorData(),
+      allowMissingPot: true
+    });
+    args.push('--extractor-args', `youtube:${extractorArgs}`);
   }
 
   if (useCookies && cookieFilePath) {
@@ -227,13 +286,18 @@ function logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath, proxyUrl }) {
     urlHost = '';
   }
 
+  const poToken = readYoutubePoToken();
+  const profiles = poToken ? YT_PLAYER_CLIENT_PROFILES_WITH_PO_TOKEN : YT_PLAYER_CLIENT_PROFILES;
+
   safeLog.info('[YouTube] Iniciando yt-dlp fallback', {
     hasUrl: Boolean(safeVideoUrl),
     urlHost,
     hasCookiesFile: Boolean(cookieFilePath),
     hasProxy: Boolean(proxyUrl),
     hasFfmpeg: Boolean(ffmpegPath),
-    playerClients: YT_PLAYER_CLIENT_PROFILES.length,
+    hasPoToken: Boolean(poToken),
+    hasVisitorData: Boolean(readYoutubeVisitorData()),
+    playerClients: profiles.length,
     outputDir: '[temp]'
   });
 }
@@ -816,12 +880,35 @@ async function runYtDlpDownload({
 
     logYtDlpFallbackStart({ safeVideoUrl, cookieFilePath: cookiesAvailable ? cookieFilePath : '', proxyUrl });
 
+    // Resolve PO Token uma vez (do manager: cache/runtime/env, nessa ordem)
+    let resolvedPoToken = '';
+    let resolvedVisitorData = '';
+    try {
+      const potResult = await poTokenManager.getCurrentPoToken();
+      if (potResult?.poToken && potResult?.visitorData) {
+        resolvedPoToken = potResult.poToken;
+        resolvedVisitorData = potResult.visitorData;
+        safeLog.info('[YouTube][yt-dlp] PO Token resolvido', {
+          source: potResult.source,
+          poTokenLen: resolvedPoToken.length
+        });
+      }
+    } catch (potErr) {
+      safeLog.warn('[YouTube][yt-dlp] Falha ao resolver PO Token, continuando sem.', {
+        message: String(potErr?.message || potErr).slice(0, 200)
+      });
+    }
+
+    const profiles = resolvedPoToken
+      ? YT_PLAYER_CLIENT_PROFILES_WITH_PO_TOKEN
+      : YT_PLAYER_CLIENT_PROFILES;
+
     const attemptPlan = [];
-    for (const playerClient of YT_PLAYER_CLIENT_PROFILES) {
+    for (const playerClient of profiles) {
       attemptPlan.push({ playerClient, useCookies: false });
     }
     if (cookiesAvailable) {
-      for (const playerClient of YT_PLAYER_CLIENT_PROFILES) {
+      for (const playerClient of profiles) {
         attemptPlan.push({ playerClient, useCookies: true });
       }
     }
@@ -838,7 +925,9 @@ async function runYtDlpDownload({
         cookieFilePath,
         proxyUrl,
         playerClient: plan.playerClient,
-        useCookies: plan.useCookies
+        useCookies: plan.useCookies,
+        poTokenOverride: resolvedPoToken,
+        visitorDataOverride: resolvedVisitorData
       });
 
       safeLog.info('[YouTube][yt-dlp] Tentativa', {
@@ -905,6 +994,10 @@ async function runYtDlpDownload({
     }
 
     if (sessionRejectedSeen) {
+      // Sessão recusada — invalida o PO Token cacheado pra próxima tentativa
+      // pegar um token fresco em vez de um talvez já queimado.
+      try { poTokenManager.invalidate(); } catch (_) { /* ignore */ }
+
       const sessionErr = new Error('YouTube recusou os cookies de sessão neste servidor/proxy.');
       sessionErr.code = 'YOUTUBE_SESSION_REJECTED';
       sessionErr.retryAfterSeconds = 300;
@@ -933,14 +1026,16 @@ async function runYtDlpToMp3({ youtubeUrl, outputMp3Path, rawCookieInput, cookie
     cookieHeader,
     proxyUrl,
     timeoutMs,
-    buildArgs: ({ safeVideoUrl, outputPath, cookieFilePath, proxyUrl: pUrl, playerClient, useCookies }) =>
+    buildArgs: ({ safeVideoUrl, outputPath, cookieFilePath, proxyUrl: pUrl, playerClient, useCookies, poTokenOverride, visitorDataOverride }) =>
       buildYtDlpArgs({
         safeVideoUrl,
         outputMp3Path: outputPath,
         cookieFilePath,
         proxyUrl: pUrl,
         playerClient,
-        useCookies
+        useCookies,
+        poTokenOverride,
+        visitorDataOverride
       })
   });
 }
@@ -954,14 +1049,16 @@ async function runYtDlpToMp4({ youtubeUrl, outputMp4Path, rawCookieInput, cookie
     cookieHeader,
     proxyUrl,
     timeoutMs,
-    buildArgs: ({ safeVideoUrl, outputPath, cookieFilePath, proxyUrl: pUrl, playerClient, useCookies }) =>
+    buildArgs: ({ safeVideoUrl, outputPath, cookieFilePath, proxyUrl: pUrl, playerClient, useCookies, poTokenOverride, visitorDataOverride }) =>
       buildYtDlpArgsMp4({
         safeVideoUrl,
         outputMp4Path: outputPath,
         cookieFilePath,
         proxyUrl: pUrl,
         playerClient,
-        useCookies
+        useCookies,
+        poTokenOverride,
+        visitorDataOverride
       })
   });
 }
@@ -970,6 +1067,9 @@ module.exports = {
   checkYtDlpAndFfmpegAvailability,
   buildYtDlpArgs,
   buildYtDlpArgsMp4,
+  buildExtractorArgsValue,
+  readYoutubePoToken,
+  readYoutubeVisitorData,
   logYtDlpFallbackStart,
   getExternalToolDiagnostics,
   assertValidYoutubeUrl,

@@ -10,26 +10,43 @@ const { safeLog } = require('../utils/safeLog');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-// Community Cobalt instances that historically accept anonymous requests.
-// Newer Cobalt versions may require an API key; instances that demand one
-// will simply return 401/403 and we'll skip to the next one.
-const COBALT_API_INSTANCES = [
-  'https://api.cobalt.tools',
-  'https://co.wuk.sh',
-  'https://cobalt-api.kwiatekmiki.com',
-  'https://cobalt.synzr.lol',
-  'https://capi.oak.li',
-  'https://cobalt.tdjsnelling.com',
-  'https://api.dl01.yt-dl.click',
-  'https://dl.khr.is'
+// Cobalt v10+ instances. A oficial 'api.cobalt.tools' está viva mas REMOVEU youtube
+// dos serviços (questão legal) — tentamos mesmo assim e fazemos skip se o vídeo
+// retornar "service not supported".
+// Override com env COBALT_INSTANCES (lista separada por vírgula).
+const COBALT_DEFAULT_INSTANCES = [
+  'https://api.cobalt.tools'
 ];
+
+function readCobaltInstances() {
+  const raw = String(process.env.COBALT_INSTANCES || '').trim();
+  if (!raw) return COBALT_DEFAULT_INSTANCES;
+
+  const parsed = raw
+    .split(/[\s,]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .map((x) => x.replace(/\/+$/, ''));
+
+  return parsed.length > 0 ? parsed : COBALT_DEFAULT_INSTANCES;
+}
+
+function readCobaltAuthHeader() {
+  const key = String(process.env.COBALT_API_KEY || '').trim();
+  if (key) return `Api-Key ${key}`;
+
+  const bearer = String(process.env.COBALT_BEARER_TOKEN || '').trim();
+  if (bearer) return `Bearer ${bearer}`;
+
+  return '';
+}
 
 const FETCH_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-function postJson(urlString, payload, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+function postJson(urlString, payload, { timeoutMs = FETCH_TIMEOUT_MS, authHeader } = {}) {
   return new Promise((resolve, reject) => {
     let url;
     try {
@@ -41,21 +58,24 @@ function postJson(urlString, payload, { timeoutMs = FETCH_TIMEOUT_MS } = {}) {
 
     const body = Buffer.from(JSON.stringify(payload), 'utf-8');
     const lib = url.protocol === 'http:' ? http : https;
+    const headers = {
+      'User-Agent': USER_AGENT,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'Content-Length': String(body.length)
+    };
+    if (authHeader) headers.Authorization = authHeader;
+
     const req = lib.request(
       url,
       {
         method: 'POST',
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Content-Length': String(body.length)
-        }
+        headers
       },
       (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
-          postJson(new URL(res.headers.location, url).toString(), payload, { timeoutMs }).then(resolve, reject);
+          postJson(new URL(res.headers.location, url).toString(), payload, { timeoutMs, authHeader }).then(resolve, reject);
           return;
         }
 
@@ -261,18 +281,23 @@ function downloadHttpToFile(streamUrl, outputPath, { timeoutMs = DOWNLOAD_TIMEOU
   });
 }
 
-async function tryCobaltInstance(baseUrl, payload) {
+async function tryCobaltInstance(baseUrl, payload, { authHeader } = {}) {
   // Try v10+ endpoint first (POST /), then legacy /api/json
   const endpoints = [buildCobaltEndpoint(baseUrl), buildLegacyEndpoint(baseUrl)];
   let lastError;
 
   for (const endpoint of endpoints) {
     try {
-      const response = await postJson(endpoint, payload, { timeoutMs: FETCH_TIMEOUT_MS });
+      const response = await postJson(endpoint, payload, { timeoutMs: FETCH_TIMEOUT_MS, authHeader });
 
       if (response?.status === 'error') {
         const code = response?.error?.code || response?.text || 'unknown';
-        throw new Error(`Cobalt error: ${code}`);
+        const err = new Error(`Cobalt error: ${code}`);
+        // Marca erros não retentáveis (serviço não suportado etc) para o loop superior pular
+        if (/api\.service\.unsupported|service.*not.*supported|youtube.*disabled/i.test(String(code))) {
+          err.code = 'COBALT_SERVICE_UNSUPPORTED';
+        }
+        throw err;
       }
 
       const streamUrl = pickCobaltStreamUrl(response);
@@ -283,6 +308,7 @@ async function tryCobaltInstance(baseUrl, payload) {
       throw new Error(`Cobalt response inválido: status=${response?.status}`);
     } catch (err) {
       lastError = err;
+      if (err?.code === 'COBALT_SERVICE_UNSUPPORTED') throw err;
     }
   }
 
@@ -290,15 +316,20 @@ async function tryCobaltInstance(baseUrl, payload) {
 }
 
 async function runCobaltToMp3({ youtubeUrl, outputMp3Path }) {
-  safeLog.info('[YouTube][cobalt] iniciando fallback Cobalt MP3');
+  const instances = readCobaltInstances();
+  const authHeader = readCobaltAuthHeader();
+  safeLog.info('[YouTube][cobalt] iniciando fallback Cobalt MP3', {
+    instanceCount: instances.length,
+    hasAuth: Boolean(authHeader)
+  });
 
   const payload = buildAudioPayload(youtubeUrl);
   let lastError;
 
-  for (const baseUrl of COBALT_API_INSTANCES) {
+  for (const baseUrl of instances) {
     try {
       safeLog.info('[YouTube][cobalt] tentando instância', { instance: baseUrl });
-      const { streamUrl, filename } = await tryCobaltInstance(baseUrl, payload);
+      const { streamUrl, filename } = await tryCobaltInstance(baseUrl, payload, { authHeader });
       safeLog.info('[YouTube][cobalt] stream resolvido, baixando MP3', {
         instance: baseUrl,
         filenameProvided: Boolean(filename)
@@ -337,15 +368,20 @@ async function runCobaltToMp3({ youtubeUrl, outputMp3Path }) {
 }
 
 async function runCobaltToMp4({ youtubeUrl, outputMp4Path }) {
-  safeLog.info('[YouTube][cobalt] iniciando fallback Cobalt MP4');
+  const instances = readCobaltInstances();
+  const authHeader = readCobaltAuthHeader();
+  safeLog.info('[YouTube][cobalt] iniciando fallback Cobalt MP4', {
+    instanceCount: instances.length,
+    hasAuth: Boolean(authHeader)
+  });
 
   const payload = buildVideoPayload(youtubeUrl);
   let lastError;
 
-  for (const baseUrl of COBALT_API_INSTANCES) {
+  for (const baseUrl of instances) {
     try {
       safeLog.info('[YouTube][cobalt-mp4] tentando instância', { instance: baseUrl });
-      const { streamUrl, filename } = await tryCobaltInstance(baseUrl, payload);
+      const { streamUrl, filename } = await tryCobaltInstance(baseUrl, payload, { authHeader });
       safeLog.info('[YouTube][cobalt-mp4] stream resolvido, baixando MP4', {
         instance: baseUrl,
         filenameProvided: Boolean(filename)
@@ -380,7 +416,9 @@ module.exports = {
   runCobaltToMp3,
   runCobaltToMp4,
   _private: {
-    COBALT_API_INSTANCES,
+    COBALT_DEFAULT_INSTANCES,
+    readCobaltInstances,
+    readCobaltAuthHeader,
     buildCobaltEndpoint,
     buildLegacyEndpoint,
     buildAudioPayload,
