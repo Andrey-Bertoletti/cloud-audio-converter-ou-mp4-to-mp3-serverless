@@ -2,7 +2,11 @@ name: Sync to Hugging Face Space
 
 on:
   push:
-    branches: [main] # O deploy roda quando você der push na branch main
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   sync-to-hub:
@@ -13,13 +17,32 @@ jobs:
           fetch-depth: 0
           lfs: true
 
-      - name: Push to Hugging Face
+      - name: Verificar HF_TOKEN presente
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "::error::HF_TOKEN não está configurado nos GitHub Secrets do repositório."
+            echo "Vá em Settings → Secrets and variables → Actions → New repository secret."
+            echo "Nome: HF_TOKEN, valor: token Write gerado em https://huggingface.co/settings/tokens"
+            exit 1
+          fi
+          echo "HF_TOKEN presente (${#HF_TOKEN} chars)"
+
+      - name: Push snapshot pro HF (orphan branch, sem histórico binário)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USER: Andreybertolettidev2026
+          HF_SPACE: youtube-converter
+        run: |
+          set -euo pipefail
           git config --global user.email "bot@example.com"
           git config --global user.name "GitHub Action Auto-Sync"
-          # Substitua 'SEU_USER' pelo seu nome de usuário do Hugging Face 
-          # Substitua 'youtube-converter' pelo nome do seu Space, se for diferente
-          git remote add hf https://Andreybertolettidev2026:$HF_TOKEN@huggingface.co/spaces/Andreybertolettidev2026/youtube-converter
-          git push hf main --force
+
+          # Cria branch órfã com snapshot do HEAD — evita pre-receive hook do HF
+          # rejeitando blobs binários antigos (ex.: .angular/cache/*.db).
+          git checkout --orphan hf-deploy-tmp
+          git commit -m "deploy: ${GITHUB_SHA::7} snapshot" --quiet
+
+          git remote add hf "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/${HF_USER}/${HF_SPACE}"
+          git push hf hf-deploy-tmp:main --force
