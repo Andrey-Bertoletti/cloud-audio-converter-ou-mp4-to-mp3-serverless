@@ -1,3 +1,12 @@
+---
+title: Youtube Converter
+emoji: 🎥
+colorFrom: red
+colorTo: blue
+sdk: docker
+pinned: false
+---
+
 # MP4 to MP3 Converter (Angular + Supabase)
 
 Aplicação fullstack preparada para nuvem com:
