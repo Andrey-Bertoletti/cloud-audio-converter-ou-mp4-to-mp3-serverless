@@ -424,6 +424,10 @@ function createApp(options = {}) {
     .map((o) => o.trim())
     .filter(Boolean);
 
+  safeLog('log', '[Backend][cors] origens permitidas: ' + allowedOrigins.join(' | '));
+
+  const loggedRejectedOrigins = new Set();
+
   app.use(
     cors({
       origin(origin, callback) {
@@ -431,7 +435,11 @@ function createApp(options = {}) {
         if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
           return callback(null, true);
         }
-        return callback(new Error('CORS: origem não permitida'));
+        if (!loggedRejectedOrigins.has(origin)) {
+          loggedRejectedOrigins.add(origin);
+          safeLog('warn', '[Backend][cors] REJEITADA: "' + origin + '" — adicione em FRONTEND_URLS se for legítima.');
+        }
+        return callback(null, false);
       },
       methods: ['GET', 'POST'],
       allowedHeaders: ['Content-Type', 'Authorization']
