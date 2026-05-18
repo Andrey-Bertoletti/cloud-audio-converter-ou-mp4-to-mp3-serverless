@@ -419,9 +419,20 @@ function createApp(options = {}) {
   });
   app.use(limiter);
 
+  const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:4200')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
   app.use(
     cors({
-      origin: process.env.FRONTEND_URL || 'http://localhost:4200',
+      origin(origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        }
+        return callback(new Error('CORS: origem não permitida'));
+      },
       methods: ['GET', 'POST'],
       allowedHeaders: ['Content-Type', 'Authorization']
     })
@@ -447,13 +458,28 @@ function createApp(options = {}) {
       const { nomeArquivo, storagePath } = req.body;
       const user_id = req.user.id;
 
-      if (!nomeArquivo) {
+      if (!nomeArquivo || typeof nomeArquivo !== 'string') {
         return res.status(400).json({ error: 'nomeArquivo é obrigatório.' });
+      }
+      if (nomeArquivo.length > 255) {
+        return res.status(400).json({ error: 'nomeArquivo muito longo.' });
+      }
+
+      let safeStoragePath = null;
+      if (storagePath != null) {
+        if (typeof storagePath !== 'string' || storagePath.length > 512) {
+          return res.status(400).json({ error: 'storagePath inválido.' });
+        }
+        const expectedPrefix = `${user_id}/`;
+        if (!storagePath.startsWith(expectedPrefix) || storagePath.includes('..')) {
+          return res.status(403).json({ error: 'storagePath fora do escopo do usuário.' });
+        }
+        safeStoragePath = storagePath;
       }
 
       const { error } = await supabaseAdmin.from('conversoes').insert({
         nome_arquivo: nomeArquivo,
-        storage_path: storagePath ?? null,
+        storage_path: safeStoragePath,
         user_id
       });
 
