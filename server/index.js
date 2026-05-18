@@ -1,6 +1,24 @@
 process.env.YTDL_NO_UPDATE = process.env.YTDL_NO_UPDATE || '1';
 require('dotenv').config();
 
+// Rota fetch() global do Node pelo WARP sidecar quando o proxy aponta pra loopback.
+// Isso faz com que youtubei.js (que usa fetch nativo) saia pelo IP do Cloudflare.
+// Cobalt/Piped/Invidious usam http.request direto e ficam fora — preserva chamadas
+// pras APIs públicas via IP do datacenter (essas não importam pro YouTube).
+(function setupWarpDispatcher() {
+  const proxyUrl = process.env.YOUTUBE_PROXY_URL || process.env.HTTPS_PROXY || '';
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::|\/|$)/i.test(proxyUrl)) return;
+  try {
+    const { setGlobalDispatcher, ProxyAgent } = require('undici');
+    setGlobalDispatcher(new ProxyAgent(proxyUrl));
+    // eslint-disable-next-line no-console
+    console.log('[Backend] undici global dispatcher → ' + proxyUrl + ' (fetch nativo passa pelo WARP)');
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[Backend] não consegui setar dispatcher undici para WARP:', err?.message);
+  }
+})();
+
 const cron = require('node-cron');
 const { createApp } = require('./app');
 const { supabaseAdmin } = require('./config/supabaseAdmin');
@@ -51,14 +69,16 @@ function classifyProxyUrl(rawUrl) {
   try {
     const u = new URL(rawUrl);
     const host = u.hostname.toLowerCase();
-    const isDc = DATACENTER_PROXY_PATTERNS.some((re) => re.test(host));
-    const isRes = RESIDENTIAL_PROXY_PATTERNS.some((re) => re.test(host));
+    const isLocal = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+    const isDc = !isLocal && DATACENTER_PROXY_PATTERNS.some((re) => re.test(host));
+    const isRes = !isLocal && RESIDENTIAL_PROXY_PATTERNS.some((re) => re.test(host));
     return {
       configured: true,
       host,
+      isLocal,
       isDatacenter: isDc,
       isResidential: isRes,
-      kind: isDc ? 'datacenter' : isRes ? 'residential' : 'unknown'
+      kind: isLocal ? 'warp-local' : isDc ? 'datacenter' : isRes ? 'residential' : 'unknown'
     };
   } catch (_) {
     return { configured: true, host: 'invalid-url' };
@@ -83,7 +103,9 @@ function logProxyHealth() {
     return info;
   }
 
-  if (info.isResidential) {
+  if (info.isLocal) {
+    safeLog('log', '[Backend] Proxy local detectado: ' + info.host + ' (✓ Cloudflare WARP sidecar — IP não-datacenter pro YouTube)');
+  } else if (info.isResidential) {
     safeLog('log', '[Backend] Proxy residencial detectado: ' + info.host + ' (✓ compatível com YouTube)');
   } else {
     safeLog('log', '[Backend] Proxy configurado: ' + info.host + ' (tipo: ' + info.kind + ')');
