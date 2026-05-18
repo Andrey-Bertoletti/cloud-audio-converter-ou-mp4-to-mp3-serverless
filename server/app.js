@@ -419,12 +419,18 @@ function createApp(options = {}) {
   });
   app.use(limiter);
 
+  function normalizeOrigin(value) {
+    if (!value) return '';
+    return String(value).trim().replace(/\/+$/, '').toLowerCase();
+  }
+
   const allowedOrigins = (process.env.FRONTEND_URLS || process.env.FRONTEND_URL || 'http://localhost:4200')
     .split(',')
-    .map((o) => o.trim())
+    .map(normalizeOrigin)
     .filter(Boolean);
 
-  safeLog('log', '[Backend][cors] origens permitidas: ' + allowedOrigins.join(' | '));
+  const allowAll = allowedOrigins.includes('*');
+  safeLog('log', '[Backend][cors] origens permitidas: ' + (allowAll ? '* (qualquer)' : allowedOrigins.join(' | ')));
 
   const loggedRejectedOrigins = new Set();
 
@@ -432,7 +438,8 @@ function createApp(options = {}) {
     cors({
       origin(origin, callback) {
         if (!origin) return callback(null, true);
-        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        if (allowAll) return callback(null, true);
+        if (allowedOrigins.includes(normalizeOrigin(origin))) {
           return callback(null, true);
         }
         if (!loggedRejectedOrigins.has(origin)) {
